@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { softDeleteFields } from "../Helpers/Helpers.model.js";
 const { Schema, model, Types } = mongoose;
 
 

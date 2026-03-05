@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
-const { Schema, model, Types } = mongoose;
+const { Schema } = mongoose;
 
-const PointSchema = new Schema(
+export const PointSchema = new Schema(
   {
     type: { type: String, enum: ["Point"], default: "Point" },
     coordinates: {
@@ -16,7 +16,7 @@ const PointSchema = new Schema(
   { _id: false }
 );
 
-const PlaceSchema = new Schema(
+export const PlaceSchema = new Schema(
   {
     address: { type: String, trim: true },
     label: { type: String, trim: true },
@@ -25,7 +25,7 @@ const PlaceSchema = new Schema(
   { _id: false }
 );
 
-const softDeleteFields = {
+export const softDeleteFields = {
   isDeleted: { type: Boolean, default: false, index: true },
   deletedAt: { type: Date },
 };

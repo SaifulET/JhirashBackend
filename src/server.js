@@ -6,6 +6,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 
 import mongoose from "mongoose";
+import UserRouter from "./auth/auth.route.js";
 
 
 
@@ -42,6 +43,7 @@ app.get("/", (req, res) => {
  res.send("hellow");
 
 });
+app.use("/auth",UserRouter);
 
 
 // MongoDB Connection
