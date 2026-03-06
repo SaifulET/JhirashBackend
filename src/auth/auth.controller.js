@@ -35,7 +35,21 @@ export const authController = {
       return handleError(res, e);
     }
   },
-
+  async editRoleController(req,res){
+    try {
+      const out= await authService.editRoleService(req.body.email,req.body.role);
+       return res.status(201).json({
+        success: true,
+        data: {
+          user: sanitizeUser(out.exists),
+          message: "role added",
+        },
+      });
+    } catch (error) {
+      console.log(error,"error")
+      return handleError(res,error)
+    }
+  },
   async login(req, res) {
     try {
       const out = await authService.login(req.body);

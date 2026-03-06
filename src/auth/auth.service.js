@@ -74,16 +74,15 @@ async function issueTokens(userId) {
 }
 
 export const authService = {
-  async register({ role, name, email, phone, password }) {
+  async register({ name, email, password }) {
     
-    if (!["rider", "driver"].includes(role)) throw { status: 400, code: "VALIDATION_ERROR", message: "Invalid role" };
-    if (!email && !phone) throw { status: 400, code: "VALIDATION_ERROR", message: "Email or phone required" };
+    if (!email ) throw { status: 400, code: "VALIDATION_ERROR", message: "Email  required" };
     if (!password || password.length < 6) throw { status: 400, code: "VALIDATION_ERROR", message: "Weak password" };
 
     const normalizedEmail = email?.toLowerCase();
 
     const exists = await User.findOne({
-      $or: [...(normalizedEmail ? [{ email: normalizedEmail }] : []), ...(phone ? [{ phone }] : [])],
+      $or: [...(normalizedEmail ? [{ email: normalizedEmail }] : [])],
       isDeleted: { $ne: true },
     }).lean();
 
@@ -92,14 +91,12 @@ export const authService = {
     const passwordHash = await bcrypt.hash(password, 12);
 
     const user = await User.create({
-      role,
+     
       name,
       email: normalizedEmail,
-      phone,
       passwordHash,
       status: "active",
       emailVerifiedAt: null,
-      phoneVerifiedAt: null,
       isDeleted: false,
     });
 
@@ -109,6 +106,23 @@ export const authService = {
 
     return { user, otpForDev: otp };
   },
+  async editRoleService({email,role})
+  {
+    if (!["rider", "driver"].includes(role)) throw { status: 400, code: "VALIDATION_ERROR", message: "Invalid role" };
+    
+    const normalizedEmail = email?.toLowerCase();
+
+    const exists = await User.findOne({
+      $or: [...(normalizedEmail ? [{ email: normalizedEmail }] : [])],
+      isDeleted: { $ne: true },
+    }).lean();
+
+    if (!exists) throw { status: 409, code: "CONFLICT", message: "Invalid Email" };
+    exists.role=role;
+    await exists.save();
+    return exists;
+  }
+  ,
 
   async login({ email, password }) {
     const user = await User.findOne({ email: email?.toLowerCase(), isDeleted: { $ne: true } });
@@ -280,3 +294,4 @@ export const authService = {
     return { message: "Account deleted" };
   },
 };
+

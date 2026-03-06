@@ -9,6 +9,7 @@ const UserRouter = Router();
 // Public
 UserRouter.post("/register", authController.register);
 UserRouter.post("/login", authController.login);
+UserRouter.patch("/editRole",authController.editRoleController)
 
 // Email verification (OTP)
 UserRouter.post("/send-verification", authController.sendVerification);
@@ -25,6 +26,7 @@ UserRouter.post("/logout", authController.logout);
 
 // Protected
 UserRouter.get("/me", requireAuth, authController.me);
+
 UserRouter.patch("/change-password", requireAuth, authController.changePassword);
 UserRouter.delete("/delete-account", requireAuth, authController.deleteAccount);
 
