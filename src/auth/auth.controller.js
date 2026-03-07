@@ -27,17 +27,16 @@ export const authController = {
         data: {
           user: sanitizeUser(out.user),
           message: "Registered. Verification code sent.",
-          otpForDev: out.otpForDev, // remove in production
+         
         },
       });
     } catch (e) {
-        console.log(e,"dkk")
       return handleError(res, e);
     }
   },
   async editRoleController(req,res){
     try {
-      const out= await authService.editRoleService(req.body.email,req.body.role);
+      const out= await authService.editRoleService(req.body);
        return res.status(201).json({
         success: true,
         data: {
@@ -73,6 +72,7 @@ export const authController = {
 
   async verifyEmail(req, res) {
     try {
+
       const out = await authService.verifyEmailOtp(req.body);
       return res.json({ success: true, data: out });
     } catch (e) {
@@ -92,8 +92,10 @@ export const authController = {
   async verifyResetOtp(req, res) {
     try {
       const out = await authService.verifyResetOtp(req.body);
+      console.log(out,"out")
       return res.json({ success: true, data: out });
     } catch (e) {
+      console.log(e)
       return handleError(res, e);
     }
   },
@@ -109,6 +111,7 @@ export const authController = {
 
   async changePassword(req, res) {
     try {
+      console.log(req.auth.userId,"abc")
       const out = await authService.changePassword({ userId: req.auth.userId, ...req.body });
       return res.json({ success: true, data: out });
     } catch (e) {
@@ -151,4 +154,27 @@ export const authController = {
       return handleError(res, e);
     }
   },
+
+  async imageSaveController(req,res){
+    try {
+      let image;
+  if(req.file){ 
+      image = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${req.file.key}`;
+    }
+      const out = await authService.imageSave({ userId: req.auth.userId ,image});
+      return res.json({ success: true, data: out });
+    } catch (error) {
+      return handleError(res, e);
+    }
+  },
+  
+  async editProfileController(req,res){
+     try {
+      
+      const out = await authService.editProfile(  req.auth.userId ,req.body);
+      return res.json({ success: true, data: out });
+    } catch (error) {
+      return handleError(res, e);
+    }
+  }
 };

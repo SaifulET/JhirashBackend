@@ -5,12 +5,12 @@ const { Schema, model, Types } = mongoose;
 
 const UserSchema = new Schema(
   {
-    role: { type: String, enum: ["rider", "driver", "admin"], required: true, index: true },
+    role: { type: String, enum: ["rider", "driver", "admin"], index: true },
 
     name: { type: String, trim: true, required: true },
     email: { type: String, lowercase: true, trim: true },
     phone: { type: String, trim: true },
-
+    profileImage:{type:String},
     passwordHash: { type: String }, // email/password
     googleId: { type: String }, // google sub
 
@@ -23,6 +23,16 @@ const UserSchema = new Schema(
     ratingAvg: { type: Number, default: 0 },
     ratingCount: { type: Number, default: 0 },
     accusedCount: { type: Number, default: 0 },
+    otp: {
+      type: String,
+      select: false,
+    },
+
+    otpExpiry: {
+      type: Date,
+      select: false,
+    },
+    
 
     ...softDeleteFields,
   },

@@ -5,6 +5,7 @@ import crypto from "crypto";
 import mongoose from "mongoose";
 import { User } from "../models/User/User.model.js";
 import { AuthToken } from "../models/Auth_token/Auth_token.model.js";
+import { sendEmail } from "../core_feature/utils/mailerSender/mailer.js";
 
 const RefreshToken = mongoose.models.RefreshToken; // optional
 
@@ -101,26 +102,49 @@ export const authService = {
     });
 
     // Send verification OTP (returning for dev only)
-    const otp = randomOtp4();
+    const otp = crypto.randomInt(1000, 9999).toString();
+  user.otp = otp;
+  user.otpExpiry = new Date(Date.now() + 15 * 60 * 1000);
+  await  user.save()
+
+  // Send OTP via email
+ await sendEmail({
+  to: email,
+  subject: "Password Reset Code",
+  text: `Hello,\n\nYour YourApp password reset code is: ${otp}\n\nEnter this code to reset your password. The code expires in 10 minutes.\n\nIf you didn't request this, please secure your account.`,
+  html: `<div style="font-family: Arial, sans-serif;">
+           <h3>Verify Email</h3>
+           <p>Hello,</p>
+           <p>Verify your Email:</p>
+           <div style="background: #f0f0f0; padding: 15px; margin: 15px 0; font-size: 28px; font-weight: bold; text-align: center;">
+             ${otp}
+           </div>
+           <p>Enter this code to verify email. This code will expire in <strong>10 minutes</strong>.</p>
+           <p style="color: #666; font-size: 12px;">If you didn't request for verifing email, please ignore this email or contact support if you're concerned.</p>
+         </div>`,
+});
+
     await createToken({ userId: user._id, type: "email_otp", tokenPlain: otp, meta: { email: user.email } });
 
     return { user, otpForDev: otp };
   },
-  async editRoleService({email,role})
+  async editRoleService(data)
   {
+   let email= data.email;
+   let role=data.role;
     if (!["rider", "driver"].includes(role)) throw { status: 400, code: "VALIDATION_ERROR", message: "Invalid role" };
     
     const normalizedEmail = email?.toLowerCase();
 
-    const exists = await User.findOne({
+    const user = await User.findOne({
       $or: [...(normalizedEmail ? [{ email: normalizedEmail }] : [])],
       isDeleted: { $ne: true },
-    }).lean();
-
-    if (!exists) throw { status: 409, code: "CONFLICT", message: "Invalid Email" };
-    exists.role=role;
-    await exists.save();
-    return exists;
+    });
+    if (!user) throw { status: 409, code: "CONFLICT", message: "Invalid Email" };
+   
+    user.role=role;
+    await user.save();
+    return user;
   }
   ,
 
@@ -164,12 +188,34 @@ export const authService = {
     if (!user) return { message: "If account exists, reset code sent" };
 
     const otp = randomOtp4();
+    user.otp = otp;
+  user.otpExpiry = new Date(Date.now() + 15 * 60 * 1000);
+  await  user.save()
+
+  // Send OTP via email
+ await sendEmail({
+  to: email,
+  subject: "Password Reset Code",
+  text: `Hello,\n\nYour YourApp password reset code is: ${otp}\n\nEnter this code to reset your password. The code expires in 10 minutes.\n\nIf you didn't request this, please secure your account.`,
+  html: `<div style="font-family: Arial, sans-serif;">
+           <h3>Verify Email</h3>
+           <p>Hello,</p>
+           <p>Verify your Email:</p>
+           <div style="background: #f0f0f0; padding: 15px; margin: 15px 0; font-size: 28px; font-weight: bold; text-align: center;">
+             ${otp}
+           </div>
+           <p>Enter this code to verify email. This code will expire in <strong>10 minutes</strong>.</p>
+           <p style="color: #666; font-size: 12px;">If you didn't request for verifing email, please ignore this email or contact support if you're concerned.</p>
+         </div>`,
+});
+
     await createToken({ userId: user._id, type: "password_reset", tokenPlain: otp, meta: { email: user.email } });
 
-    return { message: "If account exists, reset code sent", otpForDev: otp };
+    return { message: "If account exists, reset code sent"};
   },
 
   async verifyResetOtp({ email, otp }) {
+    
     const user = await User.findOne({ email: email?.toLowerCase(), isDeleted: { $ne: true } });
     if (!user) throw { status: 400, code: "INVALID_OTP", message: "Invalid or expired OTP" };
     const ok = await consumeToken({ userId: user._id, type: "password_reset", tokenPlain: otp });
@@ -179,7 +225,7 @@ export const authService = {
     const resetToken = crypto.randomBytes(24).toString("hex");
     await createToken({
       userId: user._id,
-      type: "password_reset_token",
+      type: "password_reset",
       tokenPlain: resetToken,
       meta: { email: user.email },
       expiresInMinutes: 15,
@@ -188,12 +234,14 @@ export const authService = {
     return { resetToken };
   },
 
-  async resetPassword({ resetToken, newPassword }) {
+  async resetPassword({ resetToken, newPassword,confirmPassword }) {
+
+    if (newPassword !== confirmPassword) throw { status: 400, code: "VALIDATION_ERROR", message: "new password and confirm password is not same" };
     if (!newPassword || newPassword.length < 6) throw { status: 400, code: "VALIDATION_ERROR", message: "Weak password" };
 
     const tokenHash = sha256(resetToken);
     const tokenDoc = await AuthToken.findOne({
-      type: "password_reset_token",
+      type: "password_reset",
       tokenHash,
       consumedAt: { $exists: false },
       expiresAt: { $gt: new Date() },
@@ -221,13 +269,11 @@ export const authService = {
   async changePassword({ userId, currentPassword, newPassword }) {
     const user = await User.findById(userId);
     if (!user) throw { status: 404, code: "NOT_FOUND", message: "User not found" };
-
     const ok = await bcrypt.compare(currentPassword, user.passwordHash || "");
     if (!ok) throw { status: 401, code: "INVALID_CREDENTIALS", message: "Current password incorrect" };
 
     user.passwordHash = await bcrypt.hash(newPassword, 12);
     await user.save();
-
     if (RefreshToken) {
       await RefreshToken.updateMany({ userId: user._id, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date() } });
     }
@@ -293,5 +339,35 @@ export const authService = {
 
     return { message: "Account deleted" };
   },
+
+
+
+  async imageSave({userId,image}){
+     const updatedData = await User.findByIdAndUpdate(
+    userId,
+    { profileImage: image },
+    { new: true }
+  );
+
+  return updatedData;
+  },
+  async editProfile(id,updateData){
+const updatedDoc = await User.findByIdAndUpdate(
+    id,
+    updateData,
+    {
+      new: true,
+      runValidators: true,
+    }
+  );
+
+  if (!updatedDoc) {
+    throw new Error("Document not found");
+  }
+
+  return updatedDoc;
+  }
 };
+
+
 

@@ -10,6 +10,8 @@ export function requireAuth(req, res, next) {
     if (type !== "Bearer" || !token) {
       return res.status(401).json({ success: false, error: { code: "UNAUTHORIZED", message: "Missing token" } });
     }
+    
+
     const payload = jwt.verify(token, JWT_ACCESS_SECRET);
     req.auth = { userId: payload.sub, role: payload.role };
     return next();

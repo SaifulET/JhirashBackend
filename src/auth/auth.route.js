@@ -2,6 +2,7 @@
 import { Router } from "express";
 import { authController } from "./auth.controller.js";
 import { requireAuth } from "../core_feature/middleware/requireAuth.js";
+import { SingleuploadMiddleware } from "../core_feature/middleware/ImageHandler.js";
 
 
 const UserRouter = Router();
@@ -29,5 +30,7 @@ UserRouter.get("/me", requireAuth, authController.me);
 
 UserRouter.patch("/change-password", requireAuth, authController.changePassword);
 UserRouter.delete("/delete-account", requireAuth, authController.deleteAccount);
+UserRouter.patch("/image-save", requireAuth,SingleuploadMiddleware, authController.imageSaveController);
+UserRouter.patch("/profileInfo-update", requireAuth, authController.editProfileController);
 
 export default UserRouter;
