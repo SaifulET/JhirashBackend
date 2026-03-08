@@ -11,6 +11,7 @@ routdriverOnboardingRoute.use(requireAuth);
 
 // onboarding progress
 routdriverOnboardingRoute.get("/status", driverOnboardingController.getStatus);
+routdriverOnboardingRoute.patch("/status", driverOnboardingController.updateStatus);
 
 // vehicle info
 routdriverOnboardingRoute.post("/vehicle", driverOnboardingController.saveVehicle);

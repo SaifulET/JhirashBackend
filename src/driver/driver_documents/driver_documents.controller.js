@@ -13,7 +13,7 @@ const handleError = (res, error) => {
 export const driverOnboardingController = {
   async getStatus(req, res) {
     try {
-      const result = await driverOnboardingService.getStatus(req.user.id);
+      const result = await driverOnboardingService.getStatus(req.auth.userId);
 
       return res.status(200).json({
         success: true,
@@ -171,4 +171,33 @@ export const driverOnboardingController = {
       return handleError(res, error);
     }
   },
+
+  async updateStatus(req, res) {
+    try {
+
+      const { driverId, type, status, rejectionReason } = req.body;
+
+      const result = await driverOnboardingService.updateStatus({
+        adminUserId: req.auth.userId,
+        driverId,
+        type,
+        status,
+        rejectionReason
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Driver document status updated",
+        data: result
+      });
+
+    } catch (error) {
+
+      return res.status(error.status || 500).json({
+        success: false,
+        message: error.message || "Something went wrong"
+      });
+
+    }
+  }
 };

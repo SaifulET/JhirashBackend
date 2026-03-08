@@ -209,36 +209,48 @@ const updateDriverProfileSummary = async (userId) => {
 };
 
 export const driverOnboardingService = {
-  async getStatus(userId) {
-    const user = await getDriverUser(userId);
-    const driverProfile = await getOrCreateDriverProfile(userId);
-    const vehicle = await Vehicle.findOne({ driverId: userId, isActive: true }).lean();
-    const documents = await DriverDocument.find({ driverId: userId }).lean();
+async getStatus(userId) {
+  const userPromise = User.findById(userId)
+    .select("_id role isDeleted")
+    .lean();
 
-    const steps = buildStepStatus({
-      vehicle,
-      documents,
-      stripeConnected: driverProfile.stripeConnected,
-      user,
-    });
+  const driverProfilePromise = DriverProfile.findOne({ userId })
+    .select("stripeConnected")
+    .lean();
 
-    const completedSteps = steps.filter((step) => step.completed).length;
-    const totalSteps = steps.length;
+  const vehiclePromise = Vehicle.findOne({ driverId: userId, isActive: true })
+    .select("_id driverId isActive approved brand model year type size seats priceRange licensePlate")
+    .lean();
 
-    return {
-      completedSteps,
-      totalSteps,
-      canGoLive: steps.every((step) => step.completed),
-      driverProfile: {
-        status: driverProfile.status,
-        documentsStatus: driverProfile.documentsStatus,
-        stripeConnected: driverProfile.stripeConnected,
-        activeVehicleId: driverProfile.activeVehicleId,
-      },
-      vehicle,
-      steps,
-    };
-  },
+  const documentsPromise = DriverDocument.find(
+    { driverId: userId },
+    { type: 1, status: 1, _id: 0 }
+  ).lean();
+
+  const [user, driverProfile, vehicle, documents] = await Promise.all([
+    userPromise,
+    driverProfilePromise,
+    vehiclePromise,
+    documentsPromise,
+  ]);
+
+  if (!user || user.isDeleted) {
+    throw { status: 404, message: "User not found" };
+  }
+
+  if (user.role !== "driver") {
+    throw { status: 403, message: "Only drivers can access onboarding" };
+  }
+
+  let steps = buildStepStatus({
+    vehicle,
+    documents,
+    stripeConnected: driverProfile?.stripeConnected || false,
+    user,
+  });
+
+  return steps.filter((step) => step.key !== "basic_profile");
+},
 
  async saveVehicle (userId, payload) {
   await getDriverUser(userId);
@@ -492,4 +504,43 @@ export const driverOnboardingService = {
       requiredActionsCount: driverProfile.requiredActionsCount,
     };
   },
+
+
+
+  async updateStatus({ adminUserId, driverId, type, status, rejectionReason }) {
+
+  const allowedDocStatuses = new Set(["in_review", "complete", "need_attention"]);
+
+  if (!allowedDocStatuses.has(status)) {
+    throw { status: 400, message: "Invalid status value" };
+  }
+
+  const document = await DriverDocument.findOneAndUpdate(
+    { driverId, type },
+    {
+      $set: {
+        status,
+        rejectionReason: status === "need_attention" ? rejectionReason || null : null,
+        reviewedBy: adminUserId,
+        reviewedAt: new Date()
+      }
+    },
+    { new: true }
+  ).lean();
+
+  if (!document) {
+    throw { status: 404, message: "Document not found" };
+  }
+
+  await DriverProfile.updateOne(
+    { userId: driverId },
+    { $set: { status } },
+    { upsert: true }
+  );
+
+  return {
+    document,
+    status
+  };
+}
 };

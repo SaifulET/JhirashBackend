@@ -29,7 +29,7 @@ const DriverDocumentSchema = new Schema(
 
     status: {
       type: String,
-      enum: [ "in_review", "complete", "need_attension"],
+      enum: [ "in_review", "complete", "need_attention"],
       default: "in_review",
     },
 

@@ -10,6 +10,7 @@ const UserSchema = new Schema(
     name: { type: String, trim: true, required: true },
     email: { type: String, lowercase: true, trim: true },
     phone: { type: String, trim: true },
+    emergency:{type:String,trim:true},
     profileImage:{type:String},
     passwordHash: { type: String }, // email/password
     googleId: { type: String }, // google sub
