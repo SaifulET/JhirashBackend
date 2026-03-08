@@ -1,28 +1,71 @@
 import mongoose from "mongoose";
 const { Schema, model, Types } = mongoose;
+
 const DriverDocumentSchema = new Schema(
   {
-    driverId: { type: Types.ObjectId, ref: "User", required: true, index: true },
+    driverId: {
+      type: Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
 
     type: {
       type: String,
-      enum: ["profile_photo", "driver_license_front", "driver_license_back", "vehicle_insurance", "vehicle_registration"],
+      enum: [
+        "profile_photo",
+        "driver_license_front",
+        "driver_license_back",
+        "vehicle_insurance",
+        "vehicle_registration",
+      ],
       required: true,
-      index: true,
     },
 
-    fileUrl: { type: String, required: true },
+    fileUrl: {
+      type: String,
+      required: true,
+      trim: true,
+    },
 
-    status: { type: String, enum: ["submitted", "in_review", "approved", "rejected"], default: "submitted", index: true },
-    rejectionReason: { type: String },
+    status: {
+      type: String,
+      enum: [ "in_review", "complete", "need_attension"],
+      default: "in_review",
+    },
 
-    reviewedBy: { type: Types.ObjectId, ref: "User" }, // admin
-    reviewedAt: { type: Date },
+    rejectionReason: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+
+    reviewedBy: {
+      type: Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
+    reviewedAt: {
+      type: Date,
+      default: null,
+    },
   },
-  { timestamps: true, versionKey: false }
+  {
+    timestamps: true,
+    versionKey: false,
+  }
 );
 
-// One current doc per type per driver (efficient for admin + onboarding)
-DriverDocumentSchema.index({ driverId: 1, type: 1 }, { unique: true });
+// best index for onboarding and upsert
+DriverDocumentSchema.index(
+  { driverId: 1, type: 1 },
+  { unique: true }
+);
+
+// keep this only if admins frequently filter by status
+DriverDocumentSchema.index({ status: 1 });
+
+// optional admin review queue optimization
+// DriverDocumentSchema.index({ status: 1, createdAt: -1 });
 
 export const DriverDocument = model("DriverDocument", DriverDocumentSchema);

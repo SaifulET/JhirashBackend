@@ -7,6 +7,7 @@ import cookieParser from "cookie-parser";
 
 import mongoose from "mongoose";
 import UserRouter from "./auth/auth.route.js";
+import routdriverOnboardingRoute from "./driver/driver_documents/driver_documents.route.js";
 
 
 
@@ -38,6 +39,7 @@ app.get("/", (req, res) => {
 
 });
 app.use("/auth",UserRouter);
+app.use("/driverOnboarding",routdriverOnboardingRoute)
 
 
 // MongoDB Connection

@@ -1,38 +1,122 @@
 import mongoose from "mongoose";
 const { Schema, model, Types } = mongoose;
-const DriverProfileSchema = new Schema(
+
+const PointSchema = new Schema(
   {
-    userId: { type: Types.ObjectId, ref: "User", required: true, unique: true, index: true },
-
-    status: { type: String, enum: ["pending", "active", "suspended"], default: "pending", index: true },
-
-    isOnline: { type: Boolean, default: false, index: true },
-    isBusy: { type: Boolean, default: false, index: true },
-
-    // geo-based matching
-    location: {
-      point: { type: PointSchema },
-      updatedAt: { type: Date },
+    type: {
+      type: String,
+      enum: ["Point"],
+      default: "Point",
     },
-
-    // verification summary for fast admin view
-    documentsStatus: { type: String, enum: ["pending", "in_review", "verified", "denied"], default: "pending", index: true },
-    requiredActionsCount: { type: Number, default: 0 },
-
-    // stripe connect
-    stripeAccountId: { type: String },
-    stripeConnected: { type: Boolean, default: false },
-
-    activeVehicleId: { type: Types.ObjectId, ref: "Vehicle" },
-
-    // optional denorm
-    earningsTotal: { type: Number, default: 0 },
-    tripsCount: { type: Number, default: 0 },
+    coordinates: {
+      type: [Number], // [lng, lat]
+      required: true,
+      validate: {
+        validator: (v) => Array.isArray(v) && v.length === 2,
+        message: "coordinates must be [lng, lat]",
+      },
+    },
   },
-  { timestamps: true, versionKey: false }
+  { _id: false }
 );
 
+const DriverProfileSchema = new Schema(
+  {
+    userId: {
+      type: Types.ObjectId,
+      ref: "User",
+      required: true,
+      unique: true,
+    },
+
+    status: {
+      type: String,
+      enum: ["pending", "active", "suspended"],
+      default: "pending",
+    },
+
+    isOnline: {
+      type: Boolean,
+      default: false,
+    },
+
+    isBusy: {
+      type: Boolean,
+      default: false,
+    },
+
+    location: {
+      point: {
+        type: PointSchema,
+        default: {
+          type: "Point",
+          coordinates: [0, 0],
+        },
+      },
+      updatedAt: {
+        type: Date,
+        default: null,
+      },
+    },
+
+    documentsStatus: {
+      type: String,
+      enum: ["pending", "in_review", "verified", "denied"],
+      default: "pending",
+    },
+
+    requiredActionsCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    stripeAccountId: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+
+    stripeConnected: {
+      type: Boolean,
+      default: false,
+    },
+
+    activeVehicleId: {
+      type: Types.ObjectId,
+      ref: "Vehicle",
+      default: null,
+    },
+
+    earningsTotal: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    tripsCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+  },
+  {
+    timestamps: true,
+    versionKey: false,
+  }
+);
+
+// required for one profile per user and fast lookup by userId
+DriverProfileSchema.index({ userId: 1 }, { unique: true });
+
+// keep only if you really use nearby-driver queries
 DriverProfileSchema.index({ "location.point": "2dsphere" });
-DriverProfileSchema.index({ isOnline: 1, isBusy: 1, status: 1 });
+
+// keep only if you really use this query often:
+// find({ status, isOnline, isBusy })
+DriverProfileSchema.index({ status: 1, isOnline: 1, isBusy: 1 });
+
+// keep only if you really use admin filtering by docs + status
+DriverProfileSchema.index({ documentsStatus: 1, status: 1 });
 
 export const DriverProfile = model("DriverProfile", DriverProfileSchema);
