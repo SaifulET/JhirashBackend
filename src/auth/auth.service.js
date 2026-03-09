@@ -170,18 +170,80 @@ export const authService = {
     return { message: "Verification code sent", otpForDev: otp };
   },
 
-  async verifyEmailOtp({ email, otp }) {
-    const user = await User.findOne({ email: email?.toLowerCase(), isDeleted: { $ne: true } });
-    if (!user) throw { status: 404, code: "NOT_FOUND", message: "User not found" };
+ async verifyEmailOtp({ email, otp }) {
+  const normalizedEmail = email?.trim().toLowerCase();
 
-    const ok = await consumeToken({ userId: user._id, type: "email_otp", tokenPlain: otp });
-    if (!ok) throw { status: 400, code: "INVALID_OTP", message: "Invalid or expired OTP" };
+  if (!normalizedEmail || !otp) {
+    throw {
+      status: 400,
+      code: "VALIDATION_ERROR",
+      message: "Email and OTP are required",
+    };
+  }
 
-    user.emailVerifiedAt = new Date();
-    await user.save();
+  const user = await User.findOne(
+    {
+      email: normalizedEmail,
+      isDeleted: { $ne: true },
+    },
+    {
+      _id: 1,
+      name: 1,
+      email: 1,
+      role: 1,
+      status: 1,
+      profileImage: 1,
+      emailVerifiedAt: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+  ).lean();
 
-    return { message: "Email verified" };
-  },
+  if (!user) {
+    throw { status: 404, code: "NOT_FOUND", message: "User not found" };
+  }
+
+  const ok = await consumeToken({
+    userId: user._id,
+    type: "email_otp",
+    tokenPlain: otp,
+  });
+
+  if (!ok) {
+    throw {
+      status: 400,
+      code: "INVALID_OTP",
+      message: "Invalid or expired OTP",
+    };
+  }
+
+  const verifiedAt = new Date();
+
+  await User.updateOne(
+    { _id: user._id },
+    {
+      $set: {
+        emailVerifiedAt: verifiedAt,
+      },
+      $unset: {
+        otp: 1,
+        otpExpiry: 1,
+      },
+    }
+  );
+
+  const { accessToken, refreshToken } = await issueTokens(user._id);
+
+  return {
+    message: "Email verified successfully",
+    user: {
+      ...user,
+      emailVerifiedAt: verifiedAt,
+    },
+    accessToken,
+    refreshToken,
+  };
+},
 
   async forgotPassword({ email }) {
     const user = await User.findOne({ email: email?.toLowerCase(), isDeleted: { $ne: true } });
