@@ -27,6 +27,11 @@ const VehicleSchema = new Schema(
       enum: ["car", "suv", "van"],
       required: true,
     },
+    tier: {
+  type: String,
+  enum: ["regular", "premium"],
+  default: "regular",
+},
     size: {
       type: String,
       trim: true,

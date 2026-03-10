@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 const { Schema, model, Types } = mongoose;
-
+import {PointSchema} from "../../models/Helpers/Helpers.model.js"
 const TripStatusItemSchema = new Schema(
   {
     status: {
@@ -60,7 +60,20 @@ const TripSchema = new Schema(
       enum: ["unpaid", "authorized", "paid", "failed", "refunded", "partial"],
       default: "unpaid",
       index: true,
-    },
+    },rideOption: {
+  vehicleType: {
+    type: String,
+    enum: ["car", "suv", "van"],
+  },
+  tier: {
+    type: String,
+    enum: ["regular", "premium"],
+  },
+  size: {
+    type: String,
+    enum: ["compact", "normal", "full"],
+  },
+},
 
     cancellation: {
       canceledBy: { type: String, enum: ["rider", "driver", "system", "admin"] },

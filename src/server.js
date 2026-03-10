@@ -9,6 +9,9 @@ import mongoose from "mongoose";
 import UserRouter from "./auth/auth.route.js";
 import routdriverOnboardingRoute from "./driver/driver_documents/driver_documents.route.js";
 import driverOnboardingReadRoutes from "./driver/driver_documents/driver_documents_read/driver_documents_read.route.js";
+import riderGetRideRouter from "./riderGetRide/riderGetRide.route.js";
+import adminConfigRouter from "./admin/config/fareConfig.route.js";
+import driverHomeRouter from "./driverHome/driverHome.route.js";
 
 
 
@@ -42,6 +45,9 @@ app.get("/", (req, res) => {
 app.use("/auth",UserRouter);
 app.use("/driverOnboarding",routdriverOnboardingRoute)
 app.use("/driverOnboardingRead", driverOnboardingReadRoutes);
+app.use("/riderGetRide",riderGetRideRouter)
+app.use("/admin/config",adminConfigRouter)
+app.use("/driverHome",driverHomeRouter);
 
 // MongoDB Connection
 mongoose

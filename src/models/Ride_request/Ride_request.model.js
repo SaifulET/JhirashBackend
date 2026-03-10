@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 const { Schema, model, Types } = mongoose;
+import {PointSchema} from "../../models/Helpers/Helpers.model.js"
 const RideRequestSchema = new Schema(
   {
     riderId: { type: Types.ObjectId, ref: "User", required: true, index: true },
@@ -12,10 +13,23 @@ const RideRequestSchema = new Schema(
       pickupAt: { type: Date },
     },
 
-    preference: {
-      vehicleType: { type: String, enum: ["any", "car", "suv", "van"], default: "any" },
-      tier: { type: String, enum: ["any", "regular", "premium"], default: "any" },
-    },
+   preference: {
+  vehicleType: {
+    type: String,
+    enum: ["any", "car", "suv", "van"],
+    default: "any",
+  },
+  tier: {
+    type: String,
+    enum: ["any", "regular", "premium"],
+    default: "any",
+  },
+  size: {
+    type: String,
+    enum: ["any", "compact", "normal", "full"],
+    default: "any",
+  },
+},
 
     status: { type: String, enum: ["searching", "matched", "expired", "cancelled"], default: "searching", index: true },
 

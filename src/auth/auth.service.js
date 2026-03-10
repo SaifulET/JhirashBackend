@@ -75,7 +75,7 @@ async function issueTokens(userId) {
 }
 
 export const authService = {
-  async register({ name, email, password }) {
+  async register({ name,phone, email, password }) {
     
     if (!email ) throw { status: 400, code: "VALIDATION_ERROR", message: "Email  required" };
     if (!password || password.length < 6) throw { status: 400, code: "VALIDATION_ERROR", message: "Weak password" };
@@ -96,6 +96,7 @@ export const authService = {
       name,
       email: normalizedEmail,
       passwordHash,
+      phone,
       status: "active",
       emailVerifiedAt: null,
       isDeleted: false,

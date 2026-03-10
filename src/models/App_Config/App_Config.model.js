@@ -32,4 +32,4 @@ const FareConfigSchema = new Schema(
 
 FareConfigSchema.index({ active: 1, effectiveFrom: -1 });
 
-export const FareConfig = model("FareConfig", FareConfigSchema);
+export const FareConfig = model("FareConfigs", FareConfigSchema);
