@@ -40,18 +40,6 @@ const UserSchema = new Schema(
   { timestamps: true, versionKey: false }
 );
 
-// Efficient unique with null-allowed (partial unique)
-UserSchema.index(
-  { email: 1 },
-  { unique: true, partialFilterExpression: { email: { $type: "string" } } }
-);
-UserSchema.index(
-  { phone: 1 },
-  { unique: true, partialFilterExpression: { phone: { $type: "string" } } }
-);
-UserSchema.index(
-  { googleId: 1 },
-  { unique: true, partialFilterExpression: { googleId: { $type: "string" } } }
-);
+
 
 export const User = model("User", UserSchema);
