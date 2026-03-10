@@ -73,61 +73,51 @@ const upsertDocument = async ({ driverId, type, fileUrl }) => {
   return document;
 };
 
-const buildStepStatus = ({ vehicle, documents, stripeConnected, user }) => {
-  const docMap = {};
-  for (const doc of documents) {
-    docMap[doc.type] = doc.status;
-  }
+const buildStepStatus = ({ vehicle, documents, stripeConnected }) => {
+  const docMap = Object.fromEntries(documents.map(d => [d.type, d.status]));
+
+  const getDocStatus = (type) => {
+    const status = docMap[type];
+
+    if (status === "approved") return "completed";
+    if (status === "submitted") return "inreview";
+    return "need_attention";
+  };
+
+  const getSimpleStatus = (value) => {
+    return value ? "completed" : "need_attention";
+  };
 
   return [
     {
-      key: "basic_profile",
-      title: "Basic Profile",
-      completed: Boolean(user?.name && (user?.email || user?.phone)),
-    },
-    {
       key: "vehicle",
       title: "Vehicle Information",
-      completed: Boolean(vehicle),
+      status: getSimpleStatus(vehicle),
     },
     {
       key: "profile_photo",
       title: "Profile Photo",
-      completed: docMap.profile_photo === "approved" || docMap.profile_photo === "submitted",
-      status: docMap.profile_photo || "missing",
+      status: getDocStatus("profile_photo"),
     },
     {
       key: "driver_license_front",
       title: "Driver License Front",
-      completed:
-        docMap.driver_license_front === "approved" || docMap.driver_license_front === "submitted",
-      status: docMap.driver_license_front || "missing",
-    },
-    {
-      key: "driver_license_back",
-      title: "Driver License Back",
-      completed:
-        docMap.driver_license_back === "approved" || docMap.driver_license_back === "submitted",
-      status: docMap.driver_license_back || "missing",
+      status: getDocStatus("driver_license_front"),
     },
     {
       key: "vehicle_registration",
       title: "Vehicle Registration",
-      completed:
-        docMap.vehicle_registration === "approved" || docMap.vehicle_registration === "submitted",
-      status: docMap.vehicle_registration || "missing",
+      status: getDocStatus("vehicle_registration"),
     },
     {
       key: "vehicle_insurance",
       title: "Vehicle Insurance",
-      completed:
-        docMap.vehicle_insurance === "approved" || docMap.vehicle_insurance === "submitted",
-      status: docMap.vehicle_insurance || "missing",
+      status: getDocStatus("vehicle_insurance"),
     },
     {
       key: "stripe",
       title: "Stripe Connection",
-      completed: Boolean(stripeConnected),
+      status: getSimpleStatus(stripeConnected),
     },
   ];
 };
@@ -268,9 +258,9 @@ async  getStatus(userId) {
       status:
         step.key === "vehicle" || step.key === "stripe"
           ? step.completed
-            ? "submitted"
+            ? ""
             : "need_attention"
-          : step.status || (step.completed ? "submitted" : "need_attention"),
+          : step.status || (step.completed ? "completed" : "need_attention"),
     }));
 },
 

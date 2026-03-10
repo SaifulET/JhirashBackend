@@ -143,7 +143,7 @@ export const riderGetRideController = {
 
   async getDriverProfile(req, res) {
     try {
-      const result = await riderGetRideService.getDriverProfile(req.user.id, req.params.tripId);
+      const result = await riderGetRideService.getDriverProfile(req.auth.userId, req.params.tripId);
       return res.status(200).json({
         success: true,
         message: "Driver profile fetched successfully",
