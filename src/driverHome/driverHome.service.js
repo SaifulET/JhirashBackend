@@ -325,14 +325,37 @@ export const driverHomeService = {
     };
   },
 
-async  arrivedAtPickup(userId, tripId) {
+async arrivedAtPickup(userId, tripId) {
   await getDriverUser(userId);
 
-  const trip = await Trip.findOne({
-    _id: tripId,
-    driverId: userId,
-    status: "accepted",
-  });
+  const now = new Date();
+  const plainOtp = generateOtp();
+
+  const trip = await Trip.findOneAndUpdate(
+    {
+      _id: tripId,
+      driverId: userId,
+      status: "accepted",
+    },
+    {
+      $set: {
+        status: "driver_arrived",
+        otp: {
+          hash: plainOtp,
+          expiresAt: new Date(now.getTime() + 10 * 60 * 1000),
+          verifiedAt: null,
+        },
+      },
+      $push: {
+        statusHistory: {
+          status: "driver_arrived",
+          at: now,
+          by: "driver",
+        },
+      },
+    },
+    { new: true }
+  ).lean();
 
   if (!trip) {
     throw { status: 404, message: "Accepted trip not found" };
@@ -342,7 +365,9 @@ async  arrivedAtPickup(userId, tripId) {
     _id: trip.riderId,
     role: "rider",
     isDeleted: { $ne: true },
-  }).lean();
+  })
+    .select("email")
+    .lean();
 
   if (!rider) {
     throw { status: 404, message: "Rider not found" };
@@ -352,49 +377,24 @@ async  arrivedAtPickup(userId, tripId) {
     throw { status: 400, message: "Rider email not found" };
   }
 
-  const plainOtp = generateOtp();
- 
-
-  trip.status = "driver_arrived";
-  trip.otp = {
-    hash: plainOtp,
-    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-    verifiedAt: null,
-  };
-  trip.statusHistory.push({
-    status: "driver_arrived",
-    at: new Date(),
-    by: "driver",
-  });
-
-  await trip.save();
-
-  await sendEmail({
-   to: rider.email,
-   subject: "Trip Otp",
-   text: `Hello,\n\nYour trip otp code  is: ${plainOtp}\n\ngive the code to the driver to start the trip. The code expires in 10 minutes.`,
-  html: `
+  sendEmail({
+    to: rider.email,
+    subject: "Trip Otp",
+    text: `Hello,\n\nYour trip otp code is: ${plainOtp}\n\ngive the code to the driver to start the trip. The code expires in 10 minutes.`,
+    html: `
 <div style="font-family: Arial, sans-serif; line-height:1.6;">
   <h2>Ride Verification Code</h2>
-
   <p>Hello,</p>
-
   <p>Your driver has arrived at the pickup location. Please share the following OTP with the driver to start your trip:</p>
-
   <div style="background:#f0f0f0; padding:15px; margin:20px 0; font-size:30px; font-weight:bold; text-align:center; letter-spacing:4px;">
     ${plainOtp}
   </div>
-
   <p>This code will expire in <strong>10 minutes</strong>.</p>
-
-  <p>Please only share this code with your driver when you are ready to start the ride.</p>
-
-  <p style="color:#666; font-size:12px;">
-    If you did not request this ride or believe this email was sent by mistake, please ignore it or contact support.
-  </p>
 </div>
 `,
- });
+  }).catch((err) => {
+    console.error("Failed to send trip OTP email:", err);
+  });
 
   return {
     message: "Driver arrived at pickup and OTP sent to rider email",
@@ -586,6 +586,7 @@ async  arrivedAtPickup(userId, tripId) {
       driverId: userId,
       status: { $in: ACTIVE_TRIP_STATUSES },
     });
+
 
     if (!trip) {
       throw { status: 404, message: "Active trip not found" };

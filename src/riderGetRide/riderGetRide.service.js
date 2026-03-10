@@ -113,7 +113,7 @@ const getCurrentRequestOrTrip = async (userId) => {
   const [activeRequest, activeTrip] = await Promise.all([
     RideRequest.findOne({
       riderId: userId,
-      status: { $in: ACTIVE_REQUEST_STATUSES },
+      status: "searching",
     }).sort({ createdAt: -1 }).lean(),
 
     Trip.findOne({

@@ -209,9 +209,9 @@ const updateDriverProfileSummary = async (userId) => {
 };
 
 export const driverOnboardingService = {
-async getStatus(userId) {
+async  getStatus(userId) {
   const userPromise = User.findById(userId)
-    .select("_id role isDeleted")
+    .select("role isDeleted")
     .lean();
 
   const driverProfilePromise = DriverProfile.findOne({ userId })
@@ -219,12 +219,19 @@ async getStatus(userId) {
     .lean();
 
   const vehiclePromise = Vehicle.findOne({ driverId: userId, isActive: true })
-    .select("_id driverId isActive approved brand model year type size seats priceRange licensePlate")
+    .select("_id")
     .lean();
 
   const documentsPromise = DriverDocument.find(
-    { driverId: userId },
-    { type: 1, status: 1, _id: 0 }
+    {
+      driverId: userId,
+      type: { $ne: "driver_license_back" }, // skip at DB level
+    },
+    {
+      type: 1,
+      status: 1,
+      _id: 0,
+    }
   ).lean();
 
   const [user, driverProfile, vehicle, documents] = await Promise.all([
@@ -242,14 +249,29 @@ async getStatus(userId) {
     throw { status: 403, message: "Only drivers can access onboarding" };
   }
 
-  let steps = buildStepStatus({
+  const steps = buildStepStatus({
     vehicle,
     documents,
-    stripeConnected: driverProfile?.stripeConnected || false,
+    stripeConnected: !!driverProfile?.stripeConnected,
     user,
   });
 
-  return steps.filter((step) => step.key !== "basic_profile");
+  return steps
+    .filter(
+      (step) =>
+        step.key !== "basic_profile" &&
+        step.key !== "driver_license_back"
+    )
+    .map((step) => ({
+      key: step.key,
+      title: step.title,
+      status:
+        step.key === "vehicle" || step.key === "stripe"
+          ? step.completed
+            ? "submitted"
+            : "need_attention"
+          : step.status || (step.completed ? "submitted" : "need_attention"),
+    }));
 },
 
  async saveVehicle (userId, payload) {
