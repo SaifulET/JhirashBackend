@@ -207,6 +207,7 @@ async  getStatus(userId) {
   const driverProfilePromise = DriverProfile.findOne({ userId })
     .select("stripeConnected")
     .lean();
+    
 
   const vehiclePromise = Vehicle.findOne({ driverId: userId, isActive: true })
     .select("_id")
@@ -245,23 +246,24 @@ async  getStatus(userId) {
     stripeConnected: !!driverProfile?.stripeConnected,
     user,
   });
+  console.log(steps);
 
   return steps
-    .filter(
-      (step) =>
-        step.key !== "basic_profile" &&
-        step.key !== "driver_license_back"
-    )
-    .map((step) => ({
-      key: step.key,
-      title: step.title,
-      status:
-        step.key === "vehicle" || step.key === "stripe"
-          ? step.completed
-            ? ""
-            : "need_attention"
-          : step.status || (step.completed ? "completed" : "need_attention"),
-    }));
+    // .filter(
+    //   (step) =>
+    //     step.key !== "basic_profile" &&
+    //     step.key !== "driver_license_back"
+    // )
+    // .map((step) => ({
+    //   key: step.key,
+    //   title: step.title,
+    //   status:
+    //     step.key === "vehicle" || step.key === "stripe"
+    //       ? step.completed
+    //         ? ""
+    //         : "need_attention"
+    //       : step.status || (step.completed ? "completed" : "need_attention"),
+    // }));
 },
 
  async saveVehicle (userId, payload) {
