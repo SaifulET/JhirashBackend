@@ -359,39 +359,7 @@ export const riderGetRideService = {
     };
   },
 
-  async checkFareAfterDestinationChange(userId, tripId, payload) {
-    await getRiderUser(userId);
 
-    const trip = await Trip.findOne({
-      _id: tripId,
-      riderId: userId,
-      status: "started",
-    }).lean();
-
-    if (!trip) {
-      throw { status: 404, message: "Started trip not found" };
-    }
-
-    const config = await getActiveFareConfig();
-
-    const vehicleType = trip.rideOption?.vehicleType || "car";
-    const tier = trip.rideOption?.tier || "regular";
-    const size = trip.rideOption?.size || "normal";
-
-    const fare = calculateEstimate({
-      config,
-      vehicleType,
-      tier,
-      size,
-      estimatedMiles: payload.estimatedMiles || trip.distanceMiles || 0,
-      estimatedMinutes: payload.estimatedMinutes || trip.durationMinutes || 0,
-    });
-
-    return {
-      newDestination: payload.dropoff,
-      newFare: fare,
-    };
-  },
 
   async changeDestination(userId, tripId, payload) {
     await getRiderUser(userId);

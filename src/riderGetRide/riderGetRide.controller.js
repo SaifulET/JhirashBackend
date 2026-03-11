@@ -27,7 +27,7 @@ export const riderGetRideController = {
 
   async getRecentPlaces(req, res) {
     try {
-      const result = await riderGetRideService.getRecentPlaces(req.user.id);
+      const result = await riderGetRideService.getRecentPlaces(req.auth.userId);
       return res.status(200).json({
         success: true,
         message: "Recent places fetched successfully",
@@ -110,7 +110,7 @@ export const riderGetRideController = {
   async checkFareAfterDestinationChange(req, res) {
     try {
       const result = await riderGetRideService.checkFareAfterDestinationChange(
-        req.user.id,
+        req.auth.userId,
         req.params.tripId,
         req.body
       );
@@ -127,7 +127,7 @@ export const riderGetRideController = {
   async changeDestination(req, res) {
     try {
       const result = await riderGetRideService.changeDestination(
-        req.user.id,
+        req.auth.userId,
         req.params.tripId,
         req.body
       );
@@ -156,7 +156,7 @@ export const riderGetRideController = {
 
   async getTripDetails(req, res) {
     try {
-      const result = await riderGetRideService.getTripDetails(req.user.id, req.params.tripId);
+      const result = await riderGetRideService.getTripDetails(req.auth.userId, req.params.tripId);
       return res.status(200).json({
         success: true,
         message: "Trip details fetched successfully",
@@ -170,7 +170,7 @@ export const riderGetRideController = {
   async submitRating(req, res) {
     try {
       const result = await riderGetRideService.submitRating(
-        req.user.id,
+        req.auth.userId,
         req.params.tripId,
         req.body
       );
@@ -186,7 +186,7 @@ export const riderGetRideController = {
 
   async createSupportTicket(req, res) {
     try {
-      const result = await riderGetRideService.createSupportTicket(req.user.id, req.body);
+      const result = await riderGetRideService.createSupportTicket(req.auth.userId, req.body);
       return res.status(201).json({
         success: true,
         message: result.message,

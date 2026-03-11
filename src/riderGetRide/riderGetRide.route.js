@@ -10,10 +10,10 @@ riderGetRideRouter.use(requireAuth);
 
 // home
 riderGetRideRouter.get("/home", riderGetRideController.getHome);
-riderGetRideRouter.get("/recent-places", riderGetRideController.getRecentPlaces);
+riderGetRideRouter.get("/recent-places",requireAuth, riderGetRideController.getRecentPlaces);
 
 // fare / ride options
-riderGetRideRouter.post("/ride-options", riderGetRideController.getRideOptions);
+riderGetRideRouter.post("/ride-options",requireAuth, riderGetRideController.getRideOptions);
 
 // request
 riderGetRideRouter.post("/ride-request", riderGetRideController.createRideRequest);
@@ -21,16 +21,18 @@ riderGetRideRouter.get("/active", riderGetRideController.getActive);
 riderGetRideRouter.patch("/ride-request/:requestId/cancel", riderGetRideController.cancelRideRequest);
 
 // trip
-riderGetRideRouter.patch("/trip/:tripId/cancel", riderGetRideController.cancelTrip);
-riderGetRideRouter.post("/trip/:tripId/check-fare", riderGetRideController.checkFareAfterDestinationChange);
-riderGetRideRouter.patch("/trip/:tripId/change-destination", riderGetRideController.changeDestination);
-riderGetRideRouter.get("/trip/:tripId/driver-profile", riderGetRideController.getDriverProfile);
-riderGetRideRouter.get("/trip/:tripId/details", riderGetRideController.getTripDetails);
+riderGetRideRouter.patch("/trip/:tripId/cancel",requireAuth, riderGetRideController.cancelTrip);
+// riderGetRideRouter.post("/trip/:tripId/check-fare",requireAuth, riderGetRideController.checkFareAfterDestinationChange);
+riderGetRideRouter.patch("/trip/:tripId/change-destination",requireAuth, riderGetRideController.changeDestination);
+
+riderGetRideRouter.get("/trip/:tripId/driver-profile",requireAuth, riderGetRideController.getDriverProfile);
+
+riderGetRideRouter.get("/trip/:tripId/details",requireAuth, riderGetRideController.getTripDetails);
 
 // rating
-riderGetRideRouter.post("/trip/:tripId/rating", riderGetRideController.submitRating);
+riderGetRideRouter.post("/trip/:tripId/rating",requireAuth, riderGetRideController.submitRating);
 
 // support
-riderGetRideRouter.post("/support-ticket", riderGetRideController.createSupportTicket);
+riderGetRideRouter.post("/support-ticket",requireAuth, riderGetRideController.createSupportTicket);
 
 export default riderGetRideRouter;
