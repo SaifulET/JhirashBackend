@@ -29,10 +29,14 @@ riderGetRideRouter.get("/trip/:tripId/driver-profile",requireAuth, riderGetRideC
 
 riderGetRideRouter.get("/trip/:tripId/details",requireAuth, riderGetRideController.getTripDetails);
 
+riderGetRideRouter.get("/trip/:tripId/payment-summary",  riderGetRideController.getTripPaymentSummary);
+riderGetRideRouter.post("/trip/:tripId/payment-intent", riderGetRideController.createTripPaymentIntent);
+riderGetRideRouter.post("/trip/:tripId/payment-verify", riderGetRideController.verifyTripPayment);
+
 // rating
-riderGetRideRouter.post("/trip/:tripId/rating",requireAuth, riderGetRideController.submitRating);
+riderGetRideRouter.post("/trip/:tripId/rating", riderGetRideController.submitRating);
 
 // support
-riderGetRideRouter.post("/support-ticket",requireAuth, riderGetRideController.createSupportTicket);
+riderGetRideRouter.post("/support-ticket", riderGetRideController.createSupportTicket);
 
 export default riderGetRideRouter;

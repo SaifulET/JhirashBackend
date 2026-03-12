@@ -167,6 +167,56 @@ export const riderGetRideController = {
     }
   },
 
+  async getTripPaymentSummary(req, res) {
+    try {
+      const result = await riderGetRideService.getTripPaymentSummary(
+        req.auth.userId,
+        req.params.tripId
+      );
+      return res.status(200).json({
+        success: true,
+        message: "Trip payment summary fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
+  async createTripPaymentIntent(req, res) {
+    try {
+      const result = await riderGetRideService.createTripPaymentIntent(
+        req.auth.userId,
+        req.params.tripId,
+        req.body
+      );
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
+  async verifyTripPayment(req, res) {
+    try {
+      const result = await riderGetRideService.verifyTripPayment(
+        req.auth.userId,
+        req.params.tripId,
+        req.body
+      );
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
   async submitRating(req, res) {
     try {
       const result = await riderGetRideService.submitRating(

@@ -9,13 +9,17 @@ const PaymentSchema = new Schema(
     driverId: { type: Types.ObjectId, ref: "User", index: true },
 
     provider: { type: String, enum: ["stripe"], default: "stripe" },
+    stripeCustomerId: { type: String },
     stripePaymentIntentId: { type: String },
+    stripePaymentMethodId: { type: String },
     status: { type: String, enum: ["pending", "succeeded", "failed", "refunded"], default: "pending", index: true },
 
     currency: { type: String, default: "USD" },
     totalFare: { type: Number, required: true },
     driverGets: { type: Number, required: true },
     platformGets: { type: Number, required: true },
+    paidAt: { type: Date },
+    failureMessage: { type: String },
 
     breakdown: {
       cancellationFee: { type: Number, default: 0 },

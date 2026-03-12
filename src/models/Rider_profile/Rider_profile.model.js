@@ -5,6 +5,7 @@ const RiderProfileSchema = new Schema(
   {
     userId: { type: Types.ObjectId, ref: "User", required: true, unique: true, index: true },
 
+    stripeCustomerId: { type: String },
     defaultPaymentMethodId: { type: String }, // stripe PM id (optional)
     savedPlaces: { type: [PlaceSchema], default: [] }, // small embed list
   },

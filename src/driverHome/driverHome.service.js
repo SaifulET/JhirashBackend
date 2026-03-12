@@ -78,6 +78,63 @@ const computePlatformGets = (trip) => {
   return Number((totalFare - driverGets).toFixed(2));
 };
 
+const buildPaymentAmounts = (trip) => {
+  const totalFare = Number(trip?.pricing?.finalFare || trip?.pricing?.estimatedFare || 0);
+  const driverGets = computeDriverGets(trip);
+  const platformGets = computePlatformGets(trip);
+
+  return { totalFare, driverGets, platformGets };
+};
+
+const syncPaymentRecord = async (trip, overrides = {}) => {
+  const { totalFare, driverGets, platformGets } = buildPaymentAmounts(trip);
+
+  const payment = await Payment.findOneAndUpdate(
+    { tripId: trip._id },
+    {
+      $set: {
+        riderId: trip.riderId,
+        driverId: trip.driverId,
+        provider: "stripe",
+        currency: trip.pricing.currency || "USD",
+        totalFare,
+        driverGets,
+        platformGets,
+        breakdown: {
+          cancellationFee: Number(trip?.cancellation?.feeCharged || 0),
+          platformFee: platformGets,
+        },
+        ...overrides,
+      },
+    },
+    {
+      new: true,
+      upsert: true,
+      setDefaultsOnInsert: true,
+    }
+  );
+
+  return { payment, totalFare, driverGets, platformGets };
+};
+
+const creditDriverEarnings = async (driverId, amount) => {
+  if (Number(amount || 0) <= 0) {
+    return null;
+  }
+
+  const driverProfile = await DriverProfile.findOne({ userId: driverId });
+  if (!driverProfile) {
+    return null;
+  }
+
+  driverProfile.earningsTotal = Number(
+    (Number(driverProfile.earningsTotal || 0) + Number(amount || 0)).toFixed(2)
+  );
+
+  await driverProfile.save();
+  return driverProfile;
+};
+
 export const driverHomeService = {
   async getHome(userId) {
     const user = await getDriverUser(userId);
@@ -532,8 +589,11 @@ async arrivedAtPickup(userId, tripId) {
       trip.pricing.finalFare = Number(payload.finalFare);
     }
 
+    const { totalFare, driverGets, platformGets } = buildPaymentAmounts(trip);
+    const paymentIsRequired = totalFare > 0;
+
     trip.status = "completed";
-    trip.paymentStatus = "paid";
+    trip.paymentStatus = paymentIsRequired ? "unpaid" : "paid";
     trip.statusHistory.push({
       status: "completed",
       at: new Date(),
@@ -542,37 +602,30 @@ async arrivedAtPickup(userId, tripId) {
 
     await trip.save();
 
-    const totalFare = Number(trip.pricing.finalFare || trip.pricing.estimatedFare || 0);
-    const driverGets = computeDriverGets(trip);
-    const platformGets = computePlatformGets(trip);
-
-    const existingPayment = await Payment.findOne({ tripId: trip._id });
-    if (!existingPayment) {
-      await Payment.create({
-        tripId: trip._id,
-        riderId: trip.riderId,
-        driverId: trip.driverId,
-        provider: "stripe",
-        status: "succeeded",
-        currency: trip.pricing.currency,
-        totalFare,
-        driverGets,
-        platformGets,
-      });
-    }
+    await syncPaymentRecord(trip, {
+      status: paymentIsRequired ? "pending" : "succeeded",
+      paidAt: paymentIsRequired ? null : new Date(),
+      failureMessage: null,
+    });
 
     profile.isBusy = false;
     profile.tripsCount = Number(profile.tripsCount || 0) + 1;
-    profile.earningsTotal = Number((Number(profile.earningsTotal || 0) + driverGets).toFixed(2));
     await profile.save();
 
+    if (!paymentIsRequired) {
+      await creditDriverEarnings(userId, driverGets);
+    }
+
     return {
-      message: "Trip completed successfully",
+      message: paymentIsRequired
+        ? "Trip completed successfully. Rider can now pay."
+        : "Trip completed successfully",
       trip,
       paymentSummary: {
         totalFare,
         driverGets,
         platformGets,
+        paymentStatus: trip.paymentStatus,
       },
     };
   },

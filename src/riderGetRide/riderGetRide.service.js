@@ -1,5 +1,6 @@
 // src/modules/rider-get-ride/riderGetRide.service.js
 
+import mongoose from "mongoose";
 import { User } from "../models/User/User.model.js";
 import { RiderProfile } from "../models/Rider_profile/Rider_profile.model.js";
 import { RideRequest } from "../models/Ride_request/Ride_request.model.js";
@@ -8,6 +9,13 @@ import { FareConfig } from "../models/App_Config/App_Config.model.js";
 import { Vehicle } from "../models/Vehicle/Vehicle.model.js";
 import { Rating } from "../models/Rating/Rating.model.js";
 import { SupportTicket } from "../models/Support_tickets/Support_tickets.model.js";
+import { DriverProfile } from "../models/Driver_profile/Driver_profile.model.js";
+import { Payment } from "../models/Payment/Payment.model.js";
+import {
+  assertStripeConfigured,
+  getStripePublishableKey,
+  stripe,
+} from "../core_feature/utils/stripe/stripe.js";
 
 const ACTIVE_TRIP_STATUSES = ["accepted", "driver_arrived", "otp_verified", "started"];
 const ACTIVE_REQUEST_STATUSES = ["searching", "matched"];
@@ -139,16 +147,119 @@ const calculateCancellationFee = ({ trip }) => {
   return 0;
 };
 
+const getOrCreateRiderProfile = async (userId) => {
+  let riderProfile = await RiderProfile.findOne({ userId });
+
+  if (!riderProfile) {
+    riderProfile = await RiderProfile.create({ userId });
+  }
+
+  return riderProfile;
+};
+
+const getCompletedTripForPayment = async (userId, tripId) => {
+  const trip = await Trip.findOne({
+    _id: tripId,
+    riderId: userId,
+    status: "completed",
+  });
+
+  if (!trip) {
+    throw { status: 404, message: "Completed trip not found" };
+  }
+
+  return trip;
+};
+
+const buildTripPaymentAmounts = (trip) => {
+  const totalFare = Number(trip?.pricing?.finalFare || trip?.pricing?.estimatedFare || 0);
+  const driverSharePercent = Number(trip?.pricing?.driverSharePercent || 60);
+  const driverGets = Number(((totalFare * driverSharePercent) / 100).toFixed(2));
+  const platformGets = Number((totalFare - driverGets).toFixed(2));
+
+  return {
+    totalFare,
+    driverGets,
+    platformGets,
+    currency: (trip?.pricing?.currency || "USD").toUpperCase(),
+  };
+};
+
+const upsertTripPaymentRecord = async (trip, overrides = {}, options = {}) => {
+  const { totalFare, driverGets, platformGets, currency } = buildTripPaymentAmounts(trip);
+
+  return Payment.findOneAndUpdate(
+    { tripId: trip._id },
+    {
+      $set: {
+        riderId: trip.riderId,
+        driverId: trip.driverId,
+        provider: "stripe",
+        currency,
+        totalFare,
+        driverGets,
+        platformGets,
+        breakdown: {
+          cancellationFee: Number(trip?.cancellation?.feeCharged || 0),
+          platformFee: platformGets,
+        },
+        ...overrides,
+      },
+    },
+    {
+      new: true,
+      upsert: true,
+      setDefaultsOnInsert: true,
+      ...options,
+    }
+  );
+};
+
+const getOrCreateStripeCustomer = async (riderUser, riderProfile) => {
+  if (riderProfile?.stripeCustomerId) {
+    return riderProfile.stripeCustomerId;
+  }
+
+  const customer = await stripe.customers.create({
+    name: riderUser.name,
+    email: riderUser.email || undefined,
+    phone: riderUser.phone || undefined,
+    metadata: {
+      riderUserId: String(riderUser._id),
+    },
+  });
+
+  riderProfile.stripeCustomerId = customer.id;
+  await riderProfile.save();
+
+  return customer.id;
+};
+
+const creditDriverAfterSuccessfulPayment = async (driverId, amount, session) => {
+  if (Number(amount || 0) <= 0) {
+    return;
+  }
+
+  const driverProfile = await DriverProfile.findOne({ userId: driverId }).session(session);
+  if (!driverProfile) {
+    return;
+  }
+
+  driverProfile.earningsTotal = Number(
+    (Number(driverProfile.earningsTotal || 0) + Number(amount || 0)).toFixed(2)
+  );
+
+  await driverProfile.save({ session });
+};
+
 export const riderGetRideService = {
   async getHome(userId) {
     const user = await getRiderUser(userId);
 
-    let riderProfile = await RiderProfile.findOne({ userId }).lean();
-    if (!riderProfile) {
-      riderProfile = await RiderProfile.create({ userId }).then((doc) => doc.toObject());
-    }
+    const riderProfile = await getOrCreateRiderProfile(userId);
+    const riderProfileObject = riderProfile.toObject();
 
-    const recentPlaces = (riderProfile.savedPlaces || []).slice(-5).reverse();
+    const recentPlaces = (riderProfileObject.savedPlaces || []).slice(-5).reverse();
 
     const { activeRequest, activeTrip } = await getCurrentRequestOrTrip(userId);
 
@@ -474,6 +585,272 @@ export const riderGetRideService = {
     }
 
     return trip;
+  },
+
+  async getTripPaymentSummary(userId, tripId) {
+    await getRiderUser(userId);
+
+    const trip = await getCompletedTripForPayment(userId, tripId);
+    const payment = await upsertTripPaymentRecord(trip);
+
+    return {
+      tripId: trip._id,
+      tripStatus: trip.status,
+      paymentStatus: trip.paymentStatus,
+      amount: {
+        currency: payment.currency,
+        totalFare: payment.totalFare,
+        driverGets: payment.driverGets,
+        platformGets: payment.platformGets,
+      },
+      payment: {
+        provider: payment.provider,
+        status: payment.status,
+        stripePaymentIntentId: payment.stripePaymentIntentId || null,
+        stripePaymentMethodId: payment.stripePaymentMethodId || null,
+        paidAt: payment.paidAt || null,
+        failureMessage: payment.failureMessage || null,
+      },
+      publishableKey: getStripePublishableKey(),
+    };
+  },
+
+  async createTripPaymentIntent(userId, tripId, payload = {}) {
+    assertStripeConfigured();
+
+    const riderUser = await getRiderUser(userId);
+    const riderProfile = await getOrCreateRiderProfile(userId);
+    const trip = await getCompletedTripForPayment(userId, tripId);
+
+    if (trip.paymentStatus === "paid") {
+      const existingPayment = await upsertTripPaymentRecord(trip, {
+        status: "succeeded",
+        paidAt: new Date(),
+        failureMessage: null,
+      });
+
+      return {
+        message: "Trip is already paid",
+        alreadyPaid: true,
+        paymentIntentId: existingPayment.stripePaymentIntentId || null,
+        clientSecret: null,
+        publishableKey: getStripePublishableKey(),
+        payment: existingPayment,
+      };
+    }
+
+    const payment = await upsertTripPaymentRecord(trip, {
+      status: "pending",
+      failureMessage: null,
+    });
+
+    if (payment.totalFare <= 0) {
+      trip.paymentStatus = "paid";
+      await trip.save();
+
+      const zeroFarePayment = await upsertTripPaymentRecord(trip, {
+        status: "succeeded",
+        paidAt: new Date(),
+        failureMessage: null,
+      });
+
+      return {
+        message: "Trip does not require payment",
+        alreadyPaid: true,
+        paymentIntentId: zeroFarePayment.stripePaymentIntentId || null,
+        clientSecret: null,
+        publishableKey: getStripePublishableKey(),
+        payment: zeroFarePayment,
+      };
+    }
+
+    const stripeCustomerId = await getOrCreateStripeCustomer(riderUser, riderProfile);
+
+    if (payment.stripePaymentIntentId) {
+      const existingIntent = await stripe.paymentIntents.retrieve(payment.stripePaymentIntentId);
+      if (
+        ["requires_payment_method", "requires_confirmation", "requires_action", "processing"].includes(
+          existingIntent.status
+        )
+      ) {
+        await upsertTripPaymentRecord(trip, {
+          stripeCustomerId,
+          status: existingIntent.status === "requires_payment_method" ? "failed" : "pending",
+          failureMessage: existingIntent.last_payment_error?.message || null,
+        });
+
+        return {
+          message: "Existing payment intent fetched successfully",
+          alreadyPaid: false,
+          paymentIntentId: existingIntent.id,
+          clientSecret: existingIntent.client_secret,
+          publishableKey: getStripePublishableKey(),
+          customerId: stripeCustomerId,
+          amount: {
+            currency: payment.currency,
+            totalFare: payment.totalFare,
+            driverGets: payment.driverGets,
+            platformGets: payment.platformGets,
+          },
+        };
+      }
+    }
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: Math.round(Number(payment.totalFare) * 100),
+      currency: String(payment.currency || "USD").toLowerCase(),
+      customer: stripeCustomerId,
+      payment_method_types: ["card"],
+      setup_future_usage: payload?.savePaymentMethod ? "off_session" : undefined,
+      metadata: {
+        tripId: String(trip._id),
+        riderId: String(userId),
+        driverId: String(trip.driverId),
+      },
+    });
+
+    await upsertTripPaymentRecord(trip, {
+      stripeCustomerId,
+      stripePaymentIntentId: paymentIntent.id,
+      status: "pending",
+      failureMessage: null,
+    });
+
+    return {
+      message: "Payment intent created successfully",
+      alreadyPaid: false,
+      paymentIntentId: paymentIntent.id,
+      clientSecret: paymentIntent.client_secret,
+      publishableKey: getStripePublishableKey(),
+      customerId: stripeCustomerId,
+      amount: {
+        currency: payment.currency,
+        totalFare: payment.totalFare,
+        driverGets: payment.driverGets,
+        platformGets: payment.platformGets,
+      },
+      savedPaymentMethodId: riderProfile.defaultPaymentMethodId || null,
+    };
+  },
+
+  async verifyTripPayment(userId, tripId, payload = {}) {
+    assertStripeConfigured();
+
+    await getRiderUser(userId);
+    const trip = await getCompletedTripForPayment(userId, tripId);
+    const riderProfile = await getOrCreateRiderProfile(userId);
+    const payment = await upsertTripPaymentRecord(trip);
+
+    const paymentIntentId = payload?.paymentIntentId || payment.stripePaymentIntentId;
+    if (!paymentIntentId) {
+      throw { status: 400, message: "Payment intent not found for this trip" };
+    }
+
+    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    if (paymentIntent?.metadata?.tripId && paymentIntent.metadata.tripId !== String(trip._id)) {
+      throw { status: 400, message: "Payment intent does not belong to this trip" };
+    }
+
+    const paymentMethodId =
+      typeof paymentIntent.payment_method === "string"
+        ? paymentIntent.payment_method
+        : paymentIntent.payment_method?.id || null;
+    const stripeCustomerId =
+      typeof paymentIntent.customer === "string"
+        ? paymentIntent.customer
+        : paymentIntent.customer?.id || riderProfile.stripeCustomerId || null;
+
+    if (paymentIntent.status !== "succeeded") {
+      const failedStatuses = ["requires_payment_method", "canceled"];
+      const nextTripPaymentStatus = failedStatuses.includes(paymentIntent.status) ? "failed" : "unpaid";
+
+      trip.paymentStatus = nextTripPaymentStatus;
+      await trip.save();
+
+      const failedPayment = await upsertTripPaymentRecord(trip, {
+        stripeCustomerId,
+        stripePaymentIntentId: paymentIntent.id,
+        stripePaymentMethodId: paymentMethodId,
+        status: failedStatuses.includes(paymentIntent.status) ? "failed" : "pending",
+        failureMessage: paymentIntent.last_payment_error?.message || null,
+        paidAt: null,
+      });
+
+      return {
+        message: "Payment is not completed yet",
+        tripPaymentStatus: trip.paymentStatus,
+        paymentIntentStatus: paymentIntent.status,
+        payment: failedPayment,
+      };
+    }
+
+    const session = await mongoose.startSession();
+
+    try {
+      session.startTransaction();
+
+      const freshTrip = await Trip.findOne({
+        _id: trip._id,
+        riderId: userId,
+        status: "completed",
+      }).session(session);
+
+      if (!freshTrip) {
+        throw { status: 404, message: "Completed trip not found" };
+      }
+
+      const alreadyPaid = freshTrip.paymentStatus === "paid";
+      freshTrip.paymentStatus = "paid";
+      await freshTrip.save({ session });
+
+      const settledPayment = await upsertTripPaymentRecord(
+        freshTrip,
+        {
+          stripeCustomerId,
+          stripePaymentIntentId: paymentIntent.id,
+          stripePaymentMethodId: paymentMethodId,
+          status: "succeeded",
+          paidAt: new Date(),
+          failureMessage: null,
+        },
+        { session }
+      );
+
+      const freshRiderProfile = await RiderProfile.findOne({ userId }).session(session);
+      if (freshRiderProfile) {
+        if (stripeCustomerId && !freshRiderProfile.stripeCustomerId) {
+          freshRiderProfile.stripeCustomerId = stripeCustomerId;
+        }
+
+        if (payload?.savePaymentMethod && paymentMethodId) {
+          freshRiderProfile.defaultPaymentMethodId = paymentMethodId;
+        }
+
+        await freshRiderProfile.save({ session });
+      }
+
+      if (!alreadyPaid) {
+        await creditDriverAfterSuccessfulPayment(
+          freshTrip.driverId,
+          settledPayment.driverGets,
+          session
+        );
+      }
+
+      await session.commitTransaction();
+
+      return {
+        message: "Payment verified successfully",
+        tripPaymentStatus: freshTrip.paymentStatus,
+        paymentIntentStatus: paymentIntent.status,
+        payment: settledPayment,
+      };
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
   },
 
   async submitRating(userId, tripId, payload) {
