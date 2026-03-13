@@ -50,7 +50,7 @@ const TripSchema = new Schema(
       pricePerMile: { type: Number, default: 0 },
       pricePerMinute: { type: Number, default: 0 },
       surgeMultiplier: { type: Number, default: 1 },
-      driverSharePercent: { type: Number, default: 60 },
+      driverSharePercent: { type: Number },
       estimatedFare: { type: Number, default: 0 },
       finalFare: { type: Number, default: 0 },
     },

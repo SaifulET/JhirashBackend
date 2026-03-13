@@ -51,6 +51,45 @@ export const riderGetRideController = {
     }
   },
 
+  async getPaymentMethodStatus(req, res) {
+    try {
+      const result = await riderGetRideService.getPaymentMethodStatus(req.auth.userId);
+      return res.status(200).json({
+        success: true,
+        message: "Payment method status fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
+  async createPaymentSetupIntent(req, res) {
+    try {
+      const result = await riderGetRideService.createPaymentSetupIntent(req.auth.userId);
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
+  async savePaymentMethod(req, res) {
+    try {
+      const result = await riderGetRideService.savePaymentMethod(req.auth.userId, req.body);
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
   async createRideRequest(req, res) {
     try {
       const result = await riderGetRideService.createRideRequest(req.auth.userId, req.body);

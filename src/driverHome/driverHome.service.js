@@ -3,12 +3,14 @@
 import mongoose from "mongoose";
 import { User } from "../models/User/User.model.js";
 import { DriverProfile } from "../models/Driver_profile/Driver_profile.model.js";
+import { RiderProfile } from "../models/Rider_profile/Rider_profile.model.js";
 import { Vehicle } from "../models/Vehicle/Vehicle.model.js";
 import { RideRequest } from "../models/Ride_request/Ride_request.model.js";
 import { Trip } from "../models/Trip/Trip.model.js";
 import { Payment } from "../models/Payment/Payment.model.js";
 import { Rating } from "../models/Rating/Rating.model.js";
 import { sendEmail } from "../core_feature/utils/mailerSender/mailer.js";
+import { stripe } from "../core_feature/utils/stripe/stripe.js";
 import bcrypt from "bcryptjs";
 const ACTIVE_TRIP_STATUSES = ["accepted", "driver_arrived", "otp_verified", "started"];
 
@@ -68,9 +70,22 @@ const compareOtp = (plainOtp, trip) => {
 
 const computeDriverGets = (trip) => {
   const totalFare = Number(trip?.pricing?.finalFare || trip?.pricing?.estimatedFare || 0);
-  const percent = Number(trip?.pricing?.driverSharePercent || 60);
+  const percent = Number(trip?.pricing?.driverSharePercent ?? 0);
   return Number(((totalFare * percent) / 100).toFixed(2));
 };
+
+const calculateFareFromMetrics = ({
+  distanceMiles = 0,
+  durationMinutes = 0,
+  baseFare = 0,
+  pricePerMinute = 0,
+}) => {
+  const distanceFare = Number(distanceMiles || 0) * Number(baseFare || 0);
+  const timeFare = Number(durationMinutes || 0) * Number(pricePerMinute || 0);
+
+  return Number((distanceFare + timeFare).toFixed(2));
+};
+
 const generateOtp = () => String(Math.floor(1000 + Math.random() * 9000));
 const computePlatformGets = (trip) => {
   const totalFare = Number(trip?.pricing?.finalFare || trip?.pricing?.estimatedFare || 0);
@@ -133,6 +148,112 @@ const creditDriverEarnings = async (driverId, amount) => {
 
   await driverProfile.save();
   return driverProfile;
+};
+
+const toStripeAmount = (amount) => {
+  return Math.max(0, Math.round(Number(amount || 0) * 100));
+};
+
+const getStripeObjectId = (value) => {
+  if (!value) {
+    return null;
+  }
+
+  return typeof value === "string" ? value : value.id || null;
+};
+
+const buildAutoChargeResult = (payload = {}) => ({
+  attempted: false,
+  succeeded: false,
+  status: "not_attempted",
+  failureMessage: null,
+  paymentIntentId: null,
+  paymentMethodId: null,
+  stripeCustomerId: null,
+  ...payload,
+});
+
+const attemptAutomaticTripCharge = async ({ trip, riderProfile, driverProfile }) => {
+  if (!stripe) {
+    return buildAutoChargeResult({
+      status: "stripe_unavailable",
+      failureMessage: "Stripe is not configured",
+    });
+  }
+
+  if (!riderProfile?.stripeCustomerId || !riderProfile?.defaultPaymentMethodId) {
+    return buildAutoChargeResult({
+      status: "missing_payment_method",
+      failureMessage: "Rider has no saved card for automatic charging",
+      stripeCustomerId: riderProfile?.stripeCustomerId || null,
+      paymentMethodId: riderProfile?.defaultPaymentMethodId || null,
+    });
+  }
+
+  const { totalFare, driverGets, platformGets } = buildPaymentAmounts(trip);
+  if (totalFare <= 0) {
+    return buildAutoChargeResult({
+      status: "not_required",
+      stripeCustomerId: riderProfile.stripeCustomerId,
+      paymentMethodId: riderProfile.defaultPaymentMethodId,
+    });
+  }
+
+  const paymentIntentPayload = {
+    amount: toStripeAmount(totalFare),
+    currency: String(trip?.pricing?.currency || "USD").toLowerCase(),
+    customer: riderProfile.stripeCustomerId,
+    payment_method: riderProfile.defaultPaymentMethodId,
+    confirm: true,
+    off_session: true,
+    metadata: {
+      tripId: String(trip._id),
+      riderId: String(trip.riderId),
+      driverId: String(trip.driverId),
+      autoCharge: "true",
+    },
+  };
+
+  if (driverProfile?.stripeConnected && driverProfile?.stripeAccountId) {
+    paymentIntentPayload.transfer_data = {
+      destination: driverProfile.stripeAccountId,
+    };
+    paymentIntentPayload.application_fee_amount = toStripeAmount(platformGets);
+  }
+
+  try {
+    const paymentIntent = await stripe.paymentIntents.create(paymentIntentPayload);
+
+    return buildAutoChargeResult({
+      attempted: true,
+      succeeded: paymentIntent.status === "succeeded",
+      status: paymentIntent.status,
+      paymentIntentId: paymentIntent.id,
+      paymentMethodId:
+        getStripeObjectId(paymentIntent.payment_method) || riderProfile.defaultPaymentMethodId,
+      stripeCustomerId:
+        getStripeObjectId(paymentIntent.customer) || riderProfile.stripeCustomerId,
+      failureMessage: paymentIntent.last_payment_error?.message || null,
+      driverGets,
+      platformGets,
+    });
+  } catch (error) {
+    const paymentIntent = error?.payment_intent || error?.raw?.payment_intent || null;
+
+    return buildAutoChargeResult({
+      attempted: true,
+      succeeded: false,
+      status: paymentIntent?.status || "failed",
+      paymentIntentId: paymentIntent?.id || null,
+      paymentMethodId:
+        getStripeObjectId(paymentIntent?.payment_method) || riderProfile.defaultPaymentMethodId,
+      stripeCustomerId:
+        getStripeObjectId(paymentIntent?.customer) || riderProfile.stripeCustomerId,
+      failureMessage: error?.raw?.message || error?.message || "Automatic payment failed",
+      driverGets,
+      platformGets,
+    });
+  }
 };
 
 export const driverHomeService = {
@@ -331,8 +452,8 @@ export const driverHomeService = {
             pricing: {
               currency: rideRequest.quote.currency,
               baseFare: rideRequest.quote.baseFare,
-              pricePerMile: 0,
-              pricePerMinute: 0,
+              pricePerMile: rideRequest.quote.pricePerMile,
+              pricePerMinute: rideRequest.quote.pricePerMinute,
               surgeMultiplier: 1,
               driverSharePercent: rideRequest.quote.driverSharePercent,
               estimatedFare: rideRequest.quote.estimatedFare,
@@ -585,9 +706,12 @@ async arrivedAtPickup(userId, tripId) {
       trip.durationMinutes = Number(payload.durationMinutes);
     }
 
-    if (payload.finalFare !== undefined) {
-      trip.pricing.finalFare = Number(payload.finalFare);
-    }
+    trip.pricing.finalFare = calculateFareFromMetrics({
+      distanceMiles: trip.distanceMiles,
+      durationMinutes: trip.durationMinutes,
+      baseFare: trip.pricing?.baseFare,
+      pricePerMinute: trip.pricing?.pricePerMinute,
+    });
 
     const { totalFare, driverGets, platformGets } = buildPaymentAmounts(trip);
     const paymentIsRequired = totalFare > 0;
@@ -612,14 +736,66 @@ async arrivedAtPickup(userId, tripId) {
     profile.tripsCount = Number(profile.tripsCount || 0) + 1;
     await profile.save();
 
+    let autoCharge = buildAutoChargeResult();
+
+    if (paymentIsRequired) {
+      const riderProfile = await RiderProfile.findOne({ userId: trip.riderId });
+
+      autoCharge = await attemptAutomaticTripCharge({
+        trip,
+        riderProfile,
+        driverProfile: profile,
+      });
+
+      if (autoCharge.succeeded) {
+        trip.paymentStatus = "paid";
+        await trip.save();
+
+        await syncPaymentRecord(trip, {
+          stripeCustomerId: autoCharge.stripeCustomerId,
+          stripePaymentIntentId: autoCharge.paymentIntentId,
+          stripePaymentMethodId: autoCharge.paymentMethodId,
+          status: "succeeded",
+          paidAt: new Date(),
+          failureMessage: null,
+        });
+
+        await creditDriverEarnings(userId, driverGets);
+      } else if (autoCharge.attempted) {
+        trip.paymentStatus = "failed";
+        await trip.save();
+
+        await syncPaymentRecord(trip, {
+          stripeCustomerId: autoCharge.stripeCustomerId,
+          stripePaymentIntentId: autoCharge.paymentIntentId,
+          stripePaymentMethodId: autoCharge.paymentMethodId,
+          status: "failed",
+          paidAt: null,
+          failureMessage: autoCharge.failureMessage,
+        });
+      } else {
+        await syncPaymentRecord(trip, {
+          stripeCustomerId: autoCharge.stripeCustomerId,
+          stripePaymentMethodId: autoCharge.paymentMethodId,
+          status: "pending",
+          paidAt: null,
+          failureMessage: autoCharge.failureMessage,
+        });
+      }
+    }
+
     if (!paymentIsRequired) {
       await creditDriverEarnings(userId, driverGets);
     }
 
     return {
-      message: paymentIsRequired
-        ? "Trip completed successfully. Rider can now pay."
-        : "Trip completed successfully",
+      message: !paymentIsRequired
+        ? "Trip completed successfully"
+        : autoCharge.succeeded
+          ? "Trip completed and rider card charged successfully"
+          : autoCharge.attempted
+            ? "Trip completed, but automatic charge failed. Rider must complete payment manually."
+            : "Trip completed, but rider has no saved card. Manual payment is required.",
       trip,
       paymentSummary: {
         totalFare,
@@ -627,6 +803,7 @@ async arrivedAtPickup(userId, tripId) {
         platformGets,
         paymentStatus: trip.paymentStatus,
       },
+      autoCharge,
     };
   },
 

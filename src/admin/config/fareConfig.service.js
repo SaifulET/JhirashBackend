@@ -42,7 +42,6 @@ export const fareConfigService = {
       baseFare: formatBaseFare(payload.baseFare),
       pricePerMile: toNumber(payload.pricePerMile),
       pricePerMinute: toNumber(payload.pricePerMinute),
-      driverSharePercent: toNumber(payload.driverSharePercent, 60),
       effectiveFrom: new Date(),
       createdBy: adminId,
     });
@@ -69,7 +68,7 @@ export const fareConfigService = {
   }
 
   if (payload.driverSharePercent !== undefined) {
-    update.driverSharePercent = toNumber(payload.driverSharePercent, 60);
+    update.driverSharePercent = toNumber(payload.driverSharePercent);
   }
 
   // update only sent baseFare fields

@@ -60,6 +60,18 @@ const getBaseFareKey = ({ vehicleType, tier, size }) => {
   return null;
 };
 
+const calculateDistanceAndTimeFare = ({
+  distanceMiles = 0,
+  durationMinutes = 0,
+  baseFare = 0,
+  pricePerMinute = 0,
+}) => {
+  const distanceFare = Number(distanceMiles || 0) * Number(baseFare || 0);
+  const timeFare = Number(durationMinutes || 0) * Number(pricePerMinute || 0);
+
+  return Number((distanceFare + timeFare).toFixed(2));
+};
+
 const calculateEstimate = ({
   config,
   vehicleType,
@@ -70,11 +82,12 @@ const calculateEstimate = ({
 }) => {
   const fareKey = getBaseFareKey({ vehicleType, tier, size });
   const baseFare = fareKey ? config.baseFare?.[fareKey] || 0 : 0;
-
-  const distanceFare = Number(estimatedMiles || 0) * Number(config.pricePerMile || 0);
-  const timeFare = Number(estimatedMinutes || 0) * Number(config.pricePerMinute || 0);
-
-  const estimatedFare = Number((baseFare + distanceFare + timeFare).toFixed(2));
+  const estimatedFare = calculateDistanceAndTimeFare({
+    distanceMiles: estimatedMiles,
+    durationMinutes: estimatedMinutes,
+    baseFare,
+    pricePerMinute: config.pricePerMinute,
+  });
 
   return {
     currency: config.currency,
@@ -82,9 +95,9 @@ const calculateEstimate = ({
     estimatedMiles,
     estimatedMinutes,
     estimatedFare,
-    pricePerMile: config.pricePerMile,
+    pricePerMile: baseFare,
     pricePerMinute: config.pricePerMinute,
-    driverSharePercent: config.driverSharePercent,
+    driverSharePercent: Number(config.driverSharePercent ?? 0),
   };
 };
 
@@ -157,6 +170,38 @@ const getOrCreateRiderProfile = async (userId) => {
   return riderProfile;
 };
 
+const getStripeObjectId = (value) => {
+  if (!value) {
+    return null;
+  }
+
+  return typeof value === "string" ? value : value.id || null;
+};
+
+const buildPaymentMethodSummary = (paymentMethod) => {
+  if (!paymentMethod) {
+    return null;
+  }
+
+  return {
+    id: paymentMethod.id,
+    type: paymentMethod.type || null,
+    brand: paymentMethod.card?.brand || null,
+    last4: paymentMethod.card?.last4 || null,
+    expMonth: paymentMethod.card?.exp_month || null,
+    expYear: paymentMethod.card?.exp_year || null,
+  };
+};
+
+const getSavedPaymentMethodSummary = async (paymentMethodId) => {
+  if (!paymentMethodId || !stripe) {
+    return null;
+  }
+
+  const paymentMethod = await stripe.paymentMethods.retrieve(paymentMethodId);
+  return buildPaymentMethodSummary(paymentMethod);
+};
+
 const getCompletedTripForPayment = async (userId, tripId) => {
   const trip = await Trip.findOne({
     _id: tripId,
@@ -173,7 +218,7 @@ const getCompletedTripForPayment = async (userId, tripId) => {
 
 const buildTripPaymentAmounts = (trip) => {
   const totalFare = Number(trip?.pricing?.finalFare || trip?.pricing?.estimatedFare || 0);
-  const driverSharePercent = Number(trip?.pricing?.driverSharePercent || 60);
+  const driverSharePercent = Number(trip?.pricing?.driverSharePercent ?? 0);
   const driverGets = Number(((totalFare * driverSharePercent) / 100).toFixed(2));
   const platformGets = Number((totalFare - driverGets).toFixed(2));
 
@@ -269,6 +314,11 @@ export const riderGetRideService = {
         name: user.name,
         profileImage: user.profileImage || null,
       },
+      paymentMethod: {
+        ready: Boolean(riderProfileObject.defaultPaymentMethodId),
+        customerId: riderProfileObject.stripeCustomerId || null,
+        defaultPaymentMethodId: riderProfileObject.defaultPaymentMethodId || null,
+      },
       recentPlaces,
       activeRequest,
       activeTrip,
@@ -297,11 +347,121 @@ export const riderGetRideService = {
     };
   },
 
+  async getPaymentMethodStatus(userId) {
+    await getRiderUser(userId);
+
+    const riderProfile = await getOrCreateRiderProfile(userId);
+    const paymentMethod = await getSavedPaymentMethodSummary(riderProfile.defaultPaymentMethodId);
+
+    return {
+      stripeConfigured: Boolean(stripe),
+      publishableKey: getStripePublishableKey(),
+      customerId: riderProfile.stripeCustomerId || null,
+      defaultPaymentMethodId: riderProfile.defaultPaymentMethodId || null,
+      paymentMethod,
+    };
+  },
+
+  async createPaymentSetupIntent(userId) {
+    assertStripeConfigured();
+
+    const riderUser = await getRiderUser(userId);
+    const riderProfile = await getOrCreateRiderProfile(userId);
+    const stripeCustomerId = await getOrCreateStripeCustomer(riderUser, riderProfile);
+
+    const setupIntent = await stripe.setupIntents.create({
+      customer: stripeCustomerId,
+      payment_method_types: ["card"],
+      usage: "off_session",
+      metadata: {
+        riderUserId: String(userId),
+      },
+    });
+
+    return {
+      message: "Payment setup intent created successfully",
+      setupIntentId: setupIntent.id,
+      clientSecret: setupIntent.client_secret,
+      publishableKey: getStripePublishableKey(),
+      customerId: stripeCustomerId,
+      defaultPaymentMethodId: riderProfile.defaultPaymentMethodId || null,
+      paymentMethod: await getSavedPaymentMethodSummary(riderProfile.defaultPaymentMethodId),
+    };
+  },
+
+  async savePaymentMethod(userId, payload = {}) {
+    assertStripeConfigured();
+
+    const riderUser = await getRiderUser(userId);
+    const riderProfile = await getOrCreateRiderProfile(userId);
+
+    if (!payload?.setupIntentId) {
+      throw { status: 400, message: "setupIntentId is required" };
+    }
+
+    const stripeCustomerId = await getOrCreateStripeCustomer(riderUser, riderProfile);
+    const setupIntent = await stripe.setupIntents.retrieve(payload.setupIntentId);
+
+    if (!setupIntent) {
+      throw { status: 404, message: "Setup intent not found" };
+    }
+
+    if (setupIntent.status !== "succeeded") {
+      throw { status: 400, message: "Card setup is not completed yet" };
+    }
+
+    const setupIntentCustomerId = getStripeObjectId(setupIntent.customer);
+    if (setupIntentCustomerId && setupIntentCustomerId !== stripeCustomerId) {
+      throw { status: 400, message: "Setup intent does not belong to this rider" };
+    }
+
+    const paymentMethodId = getStripeObjectId(setupIntent.payment_method);
+    if (!paymentMethodId) {
+      throw { status: 400, message: "Payment method not found on setup intent" };
+    }
+
+    let paymentMethod = await stripe.paymentMethods.retrieve(paymentMethodId);
+    const paymentMethodCustomerId = getStripeObjectId(paymentMethod.customer);
+
+    if (!paymentMethodCustomerId) {
+      paymentMethod = await stripe.paymentMethods.attach(paymentMethodId, {
+        customer: stripeCustomerId,
+      });
+    } else if (paymentMethodCustomerId !== stripeCustomerId) {
+      throw { status: 400, message: "Payment method does not belong to this rider" };
+    }
+
+    await stripe.customers.update(stripeCustomerId, {
+      invoice_settings: {
+        default_payment_method: paymentMethodId,
+      },
+    });
+
+    riderProfile.stripeCustomerId = stripeCustomerId;
+    riderProfile.defaultPaymentMethodId = paymentMethodId;
+    await riderProfile.save();
+
+    return {
+      message: "Payment method saved successfully",
+      customerId: stripeCustomerId,
+      defaultPaymentMethodId: paymentMethodId,
+      paymentMethod: buildPaymentMethodSummary(paymentMethod),
+      publishableKey: getStripePublishableKey(),
+    };
+  },
+
   async createRideRequest(userId, payload) {
     await getRiderUser(userId);
 
+    const riderProfile = await getOrCreateRiderProfile(userId);
+    if (!riderProfile.defaultPaymentMethodId) {
+      throw {
+        status: 400,
+        message: "Add a card before requesting a trip",
+      };
+    }
+
     const { activeRequest, activeTrip } = await getCurrentRequestOrTrip(userId);
-    console.log(activeRequest,"kdkd",activeTrip)
     if (activeRequest || activeTrip) {
       throw { status: 409, message: "You already have an active request or trip" };
     }
@@ -361,7 +521,7 @@ export const riderGetRideService = {
     });
 
     // save recent places
-    const riderProfile = await RiderProfile.findOneAndUpdate(
+    const updatedRiderProfile = await RiderProfile.findOneAndUpdate(
       { userId },
       {
         $setOnInsert: { userId },
@@ -394,7 +554,7 @@ export const riderGetRideService = {
 
     return {
       rideRequest,
-      recentPlacesCount: riderProfile?.savedPlaces?.length || 0,
+      recentPlacesCount: updatedRiderProfile?.savedPlaces?.length || 0,
     };
   },
 

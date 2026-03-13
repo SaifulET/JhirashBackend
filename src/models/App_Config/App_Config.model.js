@@ -23,7 +23,7 @@ const FareConfigSchema = new Schema(
     pricePerMile: { type: Number, default: 0 },
     pricePerMinute: { type: Number, default: 0 },
 
-    driverSharePercent: { type: Number, min: 0, max: 100, default: 60 },
+    driverSharePercent: { type: Number, min: 0, max: 100, default: 40 },
 
     effectiveFrom: { type: Date, default: Date.now, index: true },
   },

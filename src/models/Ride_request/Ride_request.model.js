@@ -42,7 +42,7 @@ const RideRequestSchema = new Schema(
       estimatedMinutes: { type: Number, default: 0 },
       baseFare: { type: Number, default: 0 },
       estimatedFare: { type: Number, default: 0 },
-      driverSharePercent: { type: Number, default: 60 },
+      driverSharePercent: { type: Number },
     },
 
     expiresAt: { type: Date, required: true, index: true },
