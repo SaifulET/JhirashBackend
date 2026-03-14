@@ -21,7 +21,57 @@ const validateDriver = async (userId) => {
   return user;
 };
 
+const mapDocument = (doc) => {
+  if (!doc) {
+    return null;
+  }
+
+  return {
+    _id: doc._id,
+    type: doc.type,
+    fileUrl: doc.fileUrl,
+    status: doc.status,
+    rejectionReason: doc.rejectionReason || null,
+    reviewedAt: doc.reviewedAt || null,
+  };
+};
+
 export const driverOnboardingReadService = {
+async getSummary(userId) {
+  await validateDriver(userId);
+
+  const [driverProfile, vehicle, documents] = await Promise.all([
+    DriverProfile.findOne({ userId })
+      .select("stripeAccountId stripeConnected")
+      .lean(),
+
+    Vehicle.findOne({ driverId: userId, isActive: true })
+      .select("_id brand model year type size seats licensePlate approved isActive")
+      .lean(),
+
+    DriverDocument.find({ driverId: userId })
+      .select("type")
+      .lean(),
+  ]);
+
+  if (!driverProfile) {
+    throw { status: 404, message: "Driver profile not found" };
+  }
+
+  // Convert documents -> Set for O(1) checks
+  const docTypes = new Set(documents.map(d => d.type));
+
+  let missingCount = 0;
+
+  if (!driverProfile.stripeAccountId) missingCount++;
+  if (!docTypes.has("driver_license_front")) missingCount++;
+  if (!docTypes.has("driver_license_back")) missingCount++;
+  if (!docTypes.has("vehicle_registration")) missingCount++;
+  if (!docTypes.has("vehicle_insurance")) missingCount++;
+  if (!vehicle) missingCount++;
+
+  return { missingCount };
+},
 
   async getProfileImage(userId) {
     const user = await validateDriver(userId);

@@ -19,6 +19,23 @@ import {
 
 const ACTIVE_TRIP_STATUSES = ["accepted", "driver_arrived", "otp_verified", "started"];
 const ACTIVE_REQUEST_STATUSES = ["searching", "matched"];
+const TWO_MILES_IN_METERS = 3219;
+const RIDE_REQUEST_EXPIRY_MS = 5 * 60 * 1000;
+
+
+
+const mapDocument = (doc) => {
+  if (!doc) return null;
+
+  return {
+    _id: doc._id,
+    type: doc.type,
+    fileUrl: doc.fileUrl,
+    status: doc.status,
+    rejectionReason: doc.rejectionReason || null,
+    reviewedAt: doc.reviewedAt || null,
+  };
+};
 
 const getRiderUser = async (userId) => {
   const user = await User.findById(userId).lean();
@@ -144,6 +161,46 @@ const getCurrentRequestOrTrip = async (userId) => {
   ]);
 
   return { activeRequest, activeTrip };
+};
+
+const findNearbyDriversForPickup = async ({ lng, lat }) => {
+  const nearbyProfiles = await DriverProfile.find({
+    isOnline: true,
+    isBusy: false,
+    "location.point": {
+      $near: {
+        $geometry: {
+          type: "Point",
+          coordinates: [lng, lat],
+        },
+        $maxDistance: TWO_MILES_IN_METERS,
+      },
+    },
+  })
+    .populate("userId", "name profileImage ratingAvg ratingCount")
+    .populate("activeVehicleId", "brand model type size licensePlate")
+    .lean();
+
+  return nearbyProfiles
+    .filter((profile) => profile.userId)
+    .map((profile) => ({
+      driverId: profile.userId._id,
+      name: profile.userId.name,
+      profileImage: profile.userId.profileImage || null,
+      ratingAvg: profile.userId.ratingAvg || 0,
+      ratingCount: profile.userId.ratingCount || 0,
+      location: profile.location || null,
+      vehicle: profile.activeVehicleId
+        ? {
+            _id: profile.activeVehicleId._id,
+            brand: profile.activeVehicleId.brand,
+            model: profile.activeVehicleId.model,
+            type: profile.activeVehicleId.type,
+            size: profile.activeVehicleId.size,
+            licensePlate: profile.activeVehicleId.licensePlate || null,
+          }
+        : null,
+    }));
 };
 
 const calculateCancellationFee = ({ trip }) => {
@@ -492,7 +549,12 @@ export const riderGetRideService = {
       estimatedMinutes,
     });
 
-    const expiresAt = new Date(Date.now() + 45 * 1000);
+    const nearbyDrivers = await findNearbyDriversForPickup({
+      lng: pickup.lng,
+      lat: pickup.lat,
+    });
+
+    const expiresAt = new Date(Date.now() + RIDE_REQUEST_EXPIRY_MS);
 
     const rideRequest = await RideRequest.create({
       riderId: userId,
@@ -554,6 +616,7 @@ export const riderGetRideService = {
 
     return {
       rideRequest,
+      nearbyDrivers,
       recentPlacesCount: updatedRiderProfile?.savedPlaces?.length || 0,
     };
   },

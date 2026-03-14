@@ -11,6 +11,20 @@ const handleError = (res, error) => {
 };
 
 export const driverOnboardingReadController = {
+  async getSummary(req, res) {
+    try {
+      const result = await driverOnboardingReadService.getSummary(req.auth.userId);
+
+      return res.status(200).json({
+        success: true,
+        message: "Driver onboarding summary fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
   async getProfileImage(req, res) {
     try {
       const result = await driverOnboardingReadService.getProfileImage(req.auth.userId);

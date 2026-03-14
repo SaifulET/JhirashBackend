@@ -76,6 +76,19 @@ export const driverHomeController = {
     }
   },
 
+  async getNearbyRideRequests(req, res) {
+    try {
+      const result = await driverHomeService.getNearbyRideRequests(req.auth.userId);
+      return res.status(200).json({
+        success: true,
+        message: "Nearby ride requests fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
   async acceptRideRequest(req, res) {
     try {
       const result = await driverHomeService.acceptRideRequest(

@@ -8,6 +8,7 @@ const driverOnboardingReadRoutes = express.Router();
 
 driverOnboardingReadRoutes.use(requireAuth);
 
+driverOnboardingReadRoutes.get("/summary", driverOnboardingReadController.getSummary);
 driverOnboardingReadRoutes.get("/profile-image", driverOnboardingReadController.getProfileImage);
 driverOnboardingReadRoutes.get("/license-photos", driverOnboardingReadController.getLicensePhotos);
 driverOnboardingReadRoutes.get("/vehicle-registration", driverOnboardingReadController.getVehicleRegistration);

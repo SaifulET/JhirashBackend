@@ -18,6 +18,7 @@ driverHomeRouter.patch("/location",requireAuth, driverHomeController.updateLocat
 
 // request handling
 driverHomeRouter.get("/ride-requests/next",requireAuth, driverHomeController.getNextRideRequest);
+driverHomeRouter.get("/ride-requests/nearby",requireAuth, driverHomeController.getNearbyRideRequests);
 driverHomeRouter.patch("/ride-requests/:requestId/accept",requireAuth, driverHomeController.acceptRideRequest);
 
 // active trip

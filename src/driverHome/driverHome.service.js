@@ -13,6 +13,7 @@ import { sendEmail } from "../core_feature/utils/mailerSender/mailer.js";
 import { stripe } from "../core_feature/utils/stripe/stripe.js";
 import bcrypt from "bcryptjs";
 const ACTIVE_TRIP_STATUSES = ["accepted", "driver_arrived", "otp_verified", "started"];
+const TWO_MILES_IN_METERS = 3219;
 
 const getDriverUser = async (userId) => {
   const user = await User.findById(userId).lean();
@@ -49,15 +50,13 @@ const buildRideRequestQuery = (driverProfile) => {
   return {
     status: "searching",
     expiresAt: { $gt: new Date() },
-    pickup: {
-      point: {
-        $near: {
-          $geometry: {
-            type: "Point",
-            coordinates,
-          },
-          $maxDistance: 10000, // 10km radius
+    "pickup.point": {
+      $near: {
+        $geometry: {
+          type: "Point",
+          coordinates,
         },
+        $maxDistance: TWO_MILES_IN_METERS,
       },
     },
   };
@@ -387,6 +386,27 @@ export const driverHomeService = {
 
     return {
       request,
+    };
+  },
+
+  async getNearbyRideRequests(userId) {
+    await getDriverUser(userId);
+    const profile = await getDriverProfileOrFail(userId);
+
+    if (!profile.isOnline || profile.isBusy) {
+      return {
+        requests: [],
+      };
+    }
+
+    const requests = await RideRequest.find(buildRideRequestQuery(profile))
+      .sort({ createdAt: 1 })
+      .populate("riderId", "name profileImage ratingAvg ratingCount")
+      .lean();
+
+    return {
+      requests,
+      radiusMiles: 2,
     };
   },
 
