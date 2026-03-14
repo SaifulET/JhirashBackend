@@ -206,6 +206,22 @@ export const riderGetRideController = {
     }
   },
 
+  async getDriverReviews(req, res) {
+    try {
+      const result = await riderGetRideService.getDriverReviews(
+        req.auth.userId,
+        req.params.driverId
+      );
+      return res.status(200).json({
+        success: true,
+        message: "Driver reviews fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
   async getTripPaymentSummary(req, res) {
     try {
       const result = await riderGetRideService.getTripPaymentSummary(

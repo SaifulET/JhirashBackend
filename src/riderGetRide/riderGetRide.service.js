@@ -37,6 +37,17 @@ const mapDocument = (doc) => {
   };
 };
 
+const getYearsSince = (date) => {
+  if (!date) {
+    return 0;
+  }
+
+  const diffMs = Date.now() - new Date(date).getTime();
+  const years = Math.floor(diffMs / (365 * 24 * 60 * 60 * 1000));
+
+  return Math.max(1, years);
+};
+
 const getRiderUser = async (userId) => {
   const user = await User.findById(userId).lean();
 
@@ -789,6 +800,60 @@ export const riderGetRideService = {
           }
         : null,
       reviews,
+    };
+  },
+
+  async getDriverReviews(userId, driverId) {
+    await getRiderUser(userId);
+
+    const [driver, driverProfile, vehicle, reviews] = await Promise.all([
+      User.findOne({ _id: driverId, role: "driver", isDeleted: { $ne: true } }).lean(),
+      DriverProfile.findOne({ userId: driverId }).lean(),
+      Vehicle.findOne({ driverId, isActive: true }).lean(),
+      Rating.find({ toUserId: driverId })
+        .sort({ createdAt: -1 })
+        .populate("fromUserId", "name profileImage role")
+        .lean(),
+    ]);
+
+    if (!driver) {
+      throw { status: 404, message: "Driver not found" };
+    }
+
+    return {
+      driver: {
+        _id: driver._id,
+        name: driver.name,
+        profileImage: driver.profileImage || null,
+        ratingAvg: driver.ratingAvg || 0,
+        ratingCount: driver.ratingCount || 0,
+        tripsCount: driverProfile?.tripsCount || 0,
+        yearsOnPlatform: getYearsSince(driverProfile?.createdAt || driver.createdAt),
+      },
+      vehicle: vehicle
+        ? {
+            _id: vehicle._id,
+            brand: vehicle.brand,
+            model: vehicle.model,
+            type: vehicle.type,
+            size: vehicle.size,
+            licensePlate: vehicle.licensePlate || null,
+          }
+        : null,
+      reviews: reviews.map((review) => ({
+        _id: review._id,
+        stars: review.stars,
+        comment: review.comment || "",
+        createdAt: review.createdAt,
+        reviewer: review.fromUserId
+          ? {
+              _id: review.fromUserId._id,
+              name: review.fromUserId.name,
+              profileImage: review.fromUserId.profileImage || null,
+              role: review.fromUserId.role || null,
+            }
+          : null,
+      })),
     };
   },
 

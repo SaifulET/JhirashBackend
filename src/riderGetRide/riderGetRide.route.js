@@ -29,6 +29,7 @@ riderGetRideRouter.patch("/trip/:tripId/cancel",requireAuth, riderGetRideControl
 riderGetRideRouter.patch("/trip/:tripId/change-destination",requireAuth, riderGetRideController.changeDestination);
 
 riderGetRideRouter.get("/trip/:tripId/driver-profile",requireAuth, riderGetRideController.getDriverProfile);
+riderGetRideRouter.get("/drivers/:driverId/reviews", riderGetRideController.getDriverReviews);
 
 riderGetRideRouter.get("/trip/:tripId/details",requireAuth, riderGetRideController.getTripDetails);
 
@@ -38,6 +39,7 @@ riderGetRideRouter.post("/trip/:tripId/payment-verify", riderGetRideController.v
 
 // rating
 riderGetRideRouter.post("/trip/:tripId/rating", riderGetRideController.submitRating);
+riderGetRideRouter.post("/trip/:tripId/driver-review", riderGetRideController.submitRating);
 
 // support
 riderGetRideRouter.post("/support-ticket", riderGetRideController.createSupportTicket);
