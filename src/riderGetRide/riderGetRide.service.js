@@ -16,10 +16,11 @@ import {
   getStripePublishableKey,
   stripe,
 } from "../core_feature/utils/stripe/stripe.js";
+import { findNearbyAvailableDrivers } from "../core_feature/utils/rideMatching/rideMatching.helper.js";
+import { emitToUser, emitToUsers } from "../messages/socketRealtime.helper.js";
 
 const ACTIVE_TRIP_STATUSES = ["accepted", "driver_arrived", "otp_verified", "started"];
 const ACTIVE_REQUEST_STATUSES = ["searching", "matched"];
-const TWO_MILES_IN_METERS = 3219;
 const RIDE_REQUEST_EXPIRY_MS = 5 * 60 * 1000;
 
 
@@ -247,22 +248,11 @@ const getCurrentRequestOrTrip = async (userId) => {
 };
 
 const findNearbyDriversForPickup = async ({ lng, lat }) => {
-  const nearbyProfiles = await DriverProfile.find({
-    isOnline: true,
-    isBusy: false,
-    "location.point": {
-      $near: {
-        $geometry: {
-          type: "Point",
-          coordinates: [lng, lat],
-        },
-        $maxDistance: TWO_MILES_IN_METERS,
-      },
-    },
-  })
-    .populate("userId", "name profileImage ratingAvg ratingCount")
-    .populate("activeVehicleId", "brand model type size licensePlate")
-    .lean();
+  const nearbyProfiles = await findNearbyAvailableDrivers({
+    lng,
+    lat,
+    populate: true,
+  });
 
   return nearbyProfiles
     .filter((profile) => profile.userId)
@@ -284,6 +274,14 @@ const findNearbyDriversForPickup = async ({ lng, lat }) => {
           }
         : null,
     }));
+};
+
+const getRideRequestRealtimePayload = async (requestId) => {
+  const request = await RideRequest.findById(requestId)
+    .populate("riderId", "name profileImage ratingAvg ratingCount")
+    .lean();
+
+  return request;
 };
 
 const calculateCancellationFee = ({ trip }) => {
@@ -487,6 +485,24 @@ export const riderGetRideService = {
     };
   },
 
+  async getNearbyOnlineDrivers(userId, payload) {
+    await getRiderUser(userId);
+
+    const lat = Number(payload?.lat);
+    const lng = Number(payload?.lng);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      throw { status: 400, message: "Valid lat and lng are required" };
+    }
+
+    const nearbyDrivers = await findNearbyDriversForPickup({ lng, lat });
+
+    return {
+      drivers: nearbyDrivers,
+      radiusKm: 10,
+    };
+  },
+
   async getPaymentMethodStatus(userId) {
     await getRiderUser(userId);
 
@@ -665,6 +681,8 @@ export const riderGetRideService = {
       status: "searching",
     });
 
+    const liveRideRequest = await getRideRequestRealtimePayload(rideRequest._id);
+
     // save recent places
     const updatedRiderProfile = await RiderProfile.findOneAndUpdate(
       { userId },
@@ -697,8 +715,21 @@ export const riderGetRideService = {
       { upsert: true, new: true }
     );
 
+    emitToUser(userId, "ride-request:created", {
+      request: liveRideRequest,
+      nearbyDriverCount: nearbyDrivers.length,
+    });
+
+    emitToUsers(
+      nearbyDrivers.map((driver) => driver.driverId),
+      "ride-request:new",
+      {
+        request: liveRideRequest,
+      }
+    );
+
     return {
-      rideRequest,
+      rideRequest: liveRideRequest,
       nearbyDrivers,
       recentPlacesCount: updatedRiderProfile?.savedPlaces?.length || 0,
     };
@@ -756,8 +787,32 @@ export const riderGetRideService = {
       throw { status: 404, message: "Active ride request not found" };
     }
 
+    const nearbyDrivers =
+      rideRequest.pickup?.point?.coordinates?.length === 2
+        ? await findNearbyDriversForPickup({
+            lng: rideRequest.pickup.point.coordinates[0],
+            lat: rideRequest.pickup.point.coordinates[1],
+          })
+        : [];
+
     rideRequest.status = "cancelled";
     await rideRequest.save();
+
+    emitToUser(userId, "ride-request:cancelled", {
+      requestId: String(rideRequest._id),
+    });
+
+    emitToUsers(
+      [
+        ...nearbyDrivers.map((driver) => driver.driverId),
+        rideRequest.matchedDriverId,
+      ],
+      "ride-request:removed",
+      {
+        requestId: String(rideRequest._id),
+        reason: "cancelled",
+      }
+    );
 
     return {
       message: "Ride request cancelled successfully",

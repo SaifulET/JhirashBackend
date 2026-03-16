@@ -11,9 +11,17 @@ import { Payment } from "../models/Payment/Payment.model.js";
 import { Rating } from "../models/Rating/Rating.model.js";
 import { sendEmail } from "../core_feature/utils/mailerSender/mailer.js";
 import { stripe } from "../core_feature/utils/stripe/stripe.js";
+import { findNearbyAvailableDrivers } from "../core_feature/utils/rideMatching/rideMatching.helper.js";
+import { emitToUser, emitToUsers } from "../messages/socketRealtime.helper.js";
+import {
+  buildRideRequestQuery,
+  getDriverQueuePayload,
+  getNearbyRideRequestsPayload,
+  RIDE_REQUEST_RADIUS_KM,
+  RIDE_REQUEST_RADIUS_MILES,
+} from "./driverRideRequestQueue.helper.js";
 import bcrypt from "bcryptjs";
 const ACTIVE_TRIP_STATUSES = ["accepted", "driver_arrived", "otp_verified", "started"];
-const TWO_MILES_IN_METERS = 3219;
 
 const getDriverUser = async (userId) => {
   const user = await User.findById(userId).lean();
@@ -44,22 +52,30 @@ const getActiveTripForDriver = async (userId) => {
   }).sort({ createdAt: -1 });
 };
 
-const buildRideRequestQuery = (driverProfile) => {
-  const coordinates = driverProfile?.location?.point?.coordinates || [0, 0];
+// const isDriverDispatchEligible = (profile) => profile?.status === "active";
+const isDriverDispatchEligible = (profile) => profile?.status === "pending";
 
-  return {
-    status: "searching",
-    expiresAt: { $gt: new Date() },
-    "pickup.point": {
-      $near: {
-        $geometry: {
-          type: "Point",
-          coordinates,
-        },
-        $maxDistance: TWO_MILES_IN_METERS,
-      },
-    },
-  };
+const emitDriverQueueSync = async (driverId, driverProfile, triggeredBy) => {
+  if (
+    !driverProfile?.isOnline ||
+    driverProfile?.isBusy ||
+    !isDriverDispatchEligible(driverProfile)
+  ) {
+    emitToUser(driverId, "ride-request:queue", {
+      requests: [],
+      radiusMiles: RIDE_REQUEST_RADIUS_MILES,
+      radiusKm: RIDE_REQUEST_RADIUS_KM,
+      triggeredBy,
+    });
+    return;
+  }
+
+  const queue = await getDriverQueuePayload(driverProfile);
+
+  emitToUser(driverId, "ride-request:queue", {
+    ...queue,
+    triggeredBy,
+  });
 };
 
 const compareOtp = (plainOtp, trip) => {
@@ -399,9 +415,9 @@ export const driverHomeService = {
   async goOnline(userId, payload) {
     await getDriverUser(userId);
     const profile = await getDriverProfileOrFail(userId);
-    console.log(profile,"profile")
+    const hasIncomingLocation = payload?.lat !== undefined && payload?.lng !== undefined;
 
-    if (profile.status !== "pending") {
+    if (!isDriverDispatchEligible(profile)) {
       throw { status: 400, message: "Driver is not eligible to go online" };
     }
 
@@ -409,7 +425,11 @@ export const driverHomeService = {
       throw { status: 400, message: "Active vehicle is required" };
     }
 
-    if (payload?.lat !== undefined && payload?.lng !== undefined) {
+    if (!hasIncomingLocation && !profile.location?.updatedAt) {
+      throw { status: 400, message: "Driver location is required before going online" };
+    }
+
+    if (hasIncomingLocation) {
       profile.location = {
         point: {
           type: "Point",
@@ -422,6 +442,8 @@ export const driverHomeService = {
     profile.isOnline = true;
     profile.isBusy = false;
     await profile.save();
+
+    await emitDriverQueueSync(userId, profile, "driver_online");
 
     return {
       message: "Driver is now online",
@@ -443,6 +465,13 @@ export const driverHomeService = {
     profile.isOnline = false;
     profile.isBusy = false;
     await profile.save();
+
+    emitToUser(userId, "ride-request:queue", {
+      requests: [],
+      radiusMiles: RIDE_REQUEST_RADIUS_MILES,
+      radiusKm: RIDE_REQUEST_RADIUS_KM,
+      triggeredBy: "driver_offline",
+    });
 
     return {
       message: "Driver is now offline",
@@ -469,6 +498,8 @@ export const driverHomeService = {
 
     await profile.save();
 
+    await emitDriverQueueSync(userId, profile, "location_update");
+
     return {
       message: "Driver location updated",
       location: profile.location,
@@ -479,7 +510,7 @@ export const driverHomeService = {
     await getDriverUser(userId);
     const profile = await getDriverProfileOrFail(userId);
 
-    if (!profile.isOnline || profile.isBusy) {
+    if (!profile.isOnline || profile.isBusy || !isDriverDispatchEligible(profile)) {
       return {
         request: null,
       };
@@ -499,21 +530,13 @@ export const driverHomeService = {
     await getDriverUser(userId);
     const profile = await getDriverProfileOrFail(userId);
 
-    if (!profile.isOnline || profile.isBusy) {
+    if (!profile.isOnline || profile.isBusy || !isDriverDispatchEligible(profile)) {
       return {
         requests: [],
       };
     }
 
-    const requests = await RideRequest.find(buildRideRequestQuery(profile))
-      .sort({ createdAt: 1 })
-      .populate("riderId", "name profileImage ratingAvg ratingCount")
-      .lean();
-
-    return {
-      requests,
-      radiusMiles: 2,
-    };
+    return getNearbyRideRequestsPayload(profile);
   },
 
   async acceptRideRequest(userId, requestId) {
@@ -542,7 +565,7 @@ export const driverHomeService = {
         {
           _id: requestId,
           status: "searching",
-        //   expiresAt: { $gt: new Date() },
+          expiresAt: { $gt: new Date() },
         },
         {
           $set: {
@@ -599,6 +622,36 @@ export const driverHomeService = {
       await profile.save({ session });
 
       await session.commitTransaction();
+
+      const nearbyDriverProfiles =
+        rideRequest.pickup?.point?.coordinates?.length === 2
+          ? await findNearbyAvailableDrivers({
+              lng: rideRequest.pickup.point.coordinates[0],
+              lat: rideRequest.pickup.point.coordinates[1],
+            })
+          : [];
+
+      emitToUser(rideRequest.riderId, "ride-request:matched", {
+        requestId: String(rideRequest._id),
+        matchedDriverId: String(userId),
+        trip,
+      });
+
+      emitToUser(userId, "ride-request:accepted", {
+        requestId: String(rideRequest._id),
+        trip,
+      });
+
+      emitToUsers(
+        nearbyDriverProfiles.map((item) => item.userId),
+        "ride-request:removed",
+        {
+          requestId: String(rideRequest._id),
+          reason: "matched",
+        }
+      );
+
+      await emitDriverQueueSync(userId, profile, "request_accepted");
 
       return {
         message: "Ride request accepted successfully",

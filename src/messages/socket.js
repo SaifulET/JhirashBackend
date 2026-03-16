@@ -2,6 +2,12 @@
 import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
 import { registerTripChatSocket } from "./tripChat.socket.js";
+import { registerRideRequestSocket } from "./rideRequest.socket.js";
+
+let ioInstance = null;
+
+export const getUserRoom = (userId) => `user:${userId}`;
+export const getIO = () => ioInstance;
 
 export const initSocket = (httpServer) => {
   const io = new Server(httpServer, {
@@ -37,7 +43,21 @@ export const initSocket = (httpServer) => {
     }
   });
 
+  ioInstance = io;
+
+  io.on("connection", (socket) => {
+    const userRoom = getUserRoom(socket.user.id);
+    socket.join(userRoom);
+
+    socket.emit("socket:ready", {
+      userId: socket.user.id,
+      role: socket.user.role || null,
+      room: userRoom,
+    });
+  });
+
   registerTripChatSocket(io);
+  registerRideRequestSocket(io);
 
   return io;
 };

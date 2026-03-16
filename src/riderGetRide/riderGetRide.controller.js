@@ -51,6 +51,19 @@ export const riderGetRideController = {
     }
   },
 
+  async getNearbyOnlineDrivers(req, res) {
+    try {
+      const result = await riderGetRideService.getNearbyOnlineDrivers(req.auth.userId, req.body);
+      return res.status(200).json({
+        success: true,
+        message: "Nearby online drivers fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
   async getPaymentMethodStatus(req, res) {
     try {
       const result = await riderGetRideService.getPaymentMethodStatus(req.auth.userId);

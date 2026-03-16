@@ -14,6 +14,7 @@ riderGetRideRouter.get("/recent-places",requireAuth, riderGetRideController.getR
 
 // fare / ride options
 riderGetRideRouter.post("/ride-options",requireAuth, riderGetRideController.getRideOptions);
+riderGetRideRouter.post("/nearby-drivers", requireAuth, riderGetRideController.getNearbyOnlineDrivers);
 riderGetRideRouter.get("/payment-method", riderGetRideController.getPaymentMethodStatus);
 riderGetRideRouter.post("/payment-method/setup-intent", riderGetRideController.createPaymentSetupIntent);
 riderGetRideRouter.post("/payment-method/save", riderGetRideController.savePaymentMethod);
