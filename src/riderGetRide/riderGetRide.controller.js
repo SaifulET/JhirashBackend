@@ -116,6 +116,20 @@ export const riderGetRideController = {
     }
   },
 
+  async getTrips(req, res) {
+    try {
+   
+      const result = await riderGetRideService.getTrips(req.auth.userId);
+      return res.status(200).json({
+        success: true,
+        message: "Trips fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
   async cancelRideRequest(req, res) {
     try {
       const result = await riderGetRideService.cancelRideRequest(req.auth.userId, req.params.requestId);

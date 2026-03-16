@@ -13,6 +13,7 @@ import routdriverOnboardingRoute from "./driver/driver_documents/driver_document
 import driverOnboardingReadRoutes from "./driver/driver_documents/driver_documents_read/driver_documents_read.route.js";
 import riderGetRideRouter from "./riderGetRide/riderGetRide.route.js";
 import adminConfigRouter from "./admin/config/fareConfig.route.js";
+import legalContentRouter from "./admin/legalContent/legalContent.route.js";
 import driverHomeRouter from "./driverHome/driverHome.route.js";
 import tripChatRouter from "./messages/tripChat.route.js";
 
@@ -38,6 +39,8 @@ app.use("/driverOnboarding", routdriverOnboardingRoute);
 app.use("/driverOnboardingRead", driverOnboardingReadRoutes);
 app.use("/riderGetRide", riderGetRideRouter);
 app.use("/admin/config", adminConfigRouter);
+app.use("/legal-content", legalContentRouter);
+app.use("/admin/legal-content", legalContentRouter);
 app.use("/driverHome", driverHomeRouter);
 app.use("/chat", tripChatRouter);
 
@@ -54,7 +57,19 @@ const server = http.createServer(app);
 initSocket(server);
 
 // Start Server
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, "0.0.0.0", () =>
-  console.log(`Server running on port ${PORT}`)
-);
+const HOST = "0.0.0.0";
+const PORT = Number(process.env.PORT) || 5000;
+
+server.on("error", (error) => {
+  if (error.code === "EADDRINUSE") {
+    console.error(
+      `Port ${PORT} is already in use. Stop the other process using this port or change PORT in .env.`
+    );
+    process.exit(1);
+  }
+
+  console.error("Server failed to start:", error);
+  process.exit(1);
+});
+
+server.listen(PORT, HOST, () => console.log(`Server running on port ${PORT}`));

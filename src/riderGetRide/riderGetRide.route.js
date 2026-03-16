@@ -21,6 +21,7 @@ riderGetRideRouter.post("/payment-method/save", riderGetRideController.savePayme
 // request
 riderGetRideRouter.post("/ride-request", riderGetRideController.createRideRequest);
 riderGetRideRouter.get("/active", riderGetRideController.getActive);
+riderGetRideRouter.get("/trips",requireAuth, riderGetRideController.getTrips);
 riderGetRideRouter.patch("/ride-request/:requestId/cancel", riderGetRideController.cancelRideRequest);
 
 // trip

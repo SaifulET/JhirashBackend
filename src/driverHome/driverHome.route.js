@@ -23,6 +23,7 @@ driverHomeRouter.patch("/ride-requests/:requestId/accept",requireAuth, driverHom
 
 // active trip
 driverHomeRouter.get("/trip/active",requireAuth, driverHomeController.getActiveTrip);
+driverHomeRouter.get("/trips", driverHomeController.getTrips);
 driverHomeRouter.patch("/trip/:tripId/arrived-pickup",requireAuth, driverHomeController.arrivedAtPickup);
 driverHomeRouter.patch("/trip/:tripId/verify-otp", driverHomeController.verifyOtp);
 
@@ -30,6 +31,9 @@ driverHomeRouter.patch("/trip/:tripId/verify-otp", driverHomeController.verifyOt
 driverHomeRouter.patch("/trip/:tripId/start", driverHomeController.startTrip);
 
 driverHomeRouter.get("/trip/:tripId/rider-profile", driverHomeController.getRiderProfile);
+driverHomeRouter.get("/riders/:riderId/reviews", driverHomeController.getRiderReviews);
+// driverHomeRouter.post("/trip/:tripId/rating", driverHomeController.submitRiderRating);
+driverHomeRouter.post("/trip/:tripId/rider-review", driverHomeController.submitRiderRating);
 
 driverHomeRouter.patch("/trip/:tripId/complete", driverHomeController.completeTrip);
 

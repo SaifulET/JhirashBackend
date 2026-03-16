@@ -118,6 +118,19 @@ export const driverHomeController = {
     }
   },
 
+  async getTrips(req, res) {
+    try {
+      const result = await driverHomeService.getTrips(req.auth.userId);
+      return res.status(200).json({
+        success: true,
+        message: "Trips fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
   async arrivedAtPickup(req, res) {
     try {
       const result = await driverHomeService.arrivedAtPickup(
@@ -176,6 +189,39 @@ export const driverHomeController = {
       return res.status(200).json({
         success: true,
         message: "Rider profile fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
+  async getRiderReviews(req, res) {
+    try {
+      const result = await driverHomeService.getRiderReviews(
+        req.auth.userId,
+        req.params.riderId
+      );
+      return res.status(200).json({
+        success: true,
+        message: "Rider reviews fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
+  async submitRiderRating(req, res) {
+    try {
+      const result = await driverHomeService.submitRiderRating(
+        req.auth.userId,
+        req.params.tripId,
+        req.body
+      );
+      return res.status(201).json({
+        success: true,
+        message: result.message,
         data: result,
       });
     } catch (error) {

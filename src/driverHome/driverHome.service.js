@@ -161,6 +161,112 @@ const getStripeObjectId = (value) => {
   return typeof value === "string" ? value : value.id || null;
 };
 
+const mapReviewList = (reviews = []) =>
+  reviews.map((review) => ({
+    _id: review._id,
+    tripId: review.tripId,
+    stars: review.stars,
+    comment: review.comment || "",
+    createdAt: review.createdAt,
+    reviewer: review.fromUserId
+      ? {
+          _id: review.fromUserId._id,
+          name: review.fromUserId.name,
+          profileImage: review.fromUserId.profileImage || null,
+          role: review.fromUserId.role || null,
+        }
+      : null,
+  }));
+
+const mapReviewSummary = (review) => {
+  if (!review) {
+    return null;
+  }
+
+  return {
+    _id: review._id,
+    tripId: review.tripId,
+    stars: review.stars,
+    comment: review.comment || "",
+    createdAt: review.createdAt,
+  };
+};
+
+const mapRiderSummary = (rider) => {
+  if (!rider) {
+    return null;
+  }
+
+  return {
+    _id: rider._id,
+    name: rider.name,
+    profileImage: rider.profileImage || null,
+    ratingAvg: rider.ratingAvg || 0,
+    ratingCount: rider.ratingCount || 0,
+    emergency: rider.emergency || null,
+  };
+};
+
+const mapVehicleSummary = (vehicle) => {
+  if (!vehicle) {
+    return null;
+  }
+
+  return {
+    _id: vehicle._id,
+    brand: vehicle.brand,
+    model: vehicle.model,
+    type: vehicle.type,
+    size: vehicle.size,
+    licensePlate: vehicle.licensePlate || null,
+  };
+};
+
+const buildTripFareSummary = (trip) => ({
+  currency: (trip?.pricing?.currency || "USD").toUpperCase(),
+  estimatedFare: Number(trip?.pricing?.estimatedFare || 0),
+  finalFare: Number(trip?.pricing?.finalFare || 0),
+  totalFare: Number(trip?.pricing?.finalFare || trip?.pricing?.estimatedFare || 0),
+  driverGets: computeDriverGets(trip),
+  platformGets: computePlatformGets(trip),
+});
+
+const mapTripHistoryItem = (trip, reviewGiven = null) => ({
+  _id: trip._id,
+  status: trip.status,
+  paymentStatus: trip.paymentStatus,
+  createdAt: trip.createdAt,
+  updatedAt: trip.updatedAt,
+  pickup: trip.pickup,
+  dropoff: trip.dropoff,
+  pickupAddress: trip.pickup?.address || null,
+  destination: trip.dropoff?.address || null,
+  distanceMiles: Number(trip.distanceMiles || 0),
+  durationMinutes: Number(trip.durationMinutes || 0),
+  fare: buildTripFareSummary(trip),
+  rideOption: trip.rideOption || null,
+  cancellation: trip.cancellation || null,
+  rider: mapRiderSummary(trip.riderId),
+  vehicle: mapVehicleSummary(trip.vehicleId),
+  reviewGiven: mapReviewSummary(reviewGiven),
+});
+
+const syncUserRatingSummary = async (userId) => {
+  const ratings = await Rating.find({ toUserId: userId }).lean();
+  const ratingCount = ratings.length;
+  const ratingAvg =
+    ratingCount > 0
+      ? Number((ratings.reduce((sum, item) => sum + item.stars, 0) / ratingCount).toFixed(1))
+      : 0;
+
+  await User.findByIdAndUpdate(userId, {
+    ratingAvg,
+    ratingCount,
+  });
+
+  return { ratingAvg, ratingCount };
+};
+
 const buildAutoChargeResult = (payload = {}) => ({
   attempted: false,
   succeeded: false,
@@ -523,6 +629,34 @@ export const driverHomeService = {
     };
   },
 
+  async getTrips(userId) {
+    await getDriverUser(userId);
+
+    const trips = await Trip.find({ driverId: userId })
+      .sort({ createdAt: -1 })
+      .populate("riderId", "name profileImage ratingAvg ratingCount emergency")
+      .populate("vehicleId", "brand model type size licensePlate")
+      .lean();
+
+    const tripIds = trips.map((trip) => trip._id);
+    const reviewsGiven = tripIds.length
+      ? await Rating.find({
+          fromUserId: userId,
+          tripId: { $in: tripIds },
+        }).lean()
+      : [];
+
+    const reviewsByTripId = new Map(
+      reviewsGiven.map((review) => [String(review.tripId), review])
+    );
+
+    return {
+      trips: trips.map((trip) =>
+        mapTripHistoryItem(trip, reviewsByTripId.get(String(trip._id)) || null)
+      ),
+    };
+  },
+
 async arrivedAtPickup(userId, tripId) {
   await getDriverUser(userId);
 
@@ -704,6 +838,74 @@ async arrivedAtPickup(userId, tripId) {
     };
   },
 
+  async getRiderReviews(userId, riderId) {
+    await getDriverUser(userId);
+
+    const [rider, riderProfile, reviews] = await Promise.all([
+      User.findOne({ _id: riderId, role: "rider", isDeleted: { $ne: true } }).lean(),
+      RiderProfile.findOne({ userId: riderId }).lean(),
+      Rating.find({ toUserId: riderId })
+        .sort({ createdAt: -1 })
+        .populate("fromUserId", "name profileImage role")
+        .lean(),
+    ]);
+
+    if (!rider) {
+      throw { status: 404, message: "Rider not found" };
+    }
+
+    return {
+      rider: {
+        _id: rider._id,
+        name: rider.name,
+        profileImage: rider.profileImage || null,
+        ratingAvg: rider.ratingAvg || 0,
+        ratingCount: rider.ratingCount || 0,
+        savedPlacesCount: riderProfile?.savedPlaces?.length || 0,
+      },
+      reviews: mapReviewList(reviews),
+    };
+  },
+
+  async submitRiderRating(userId, tripId, payload = {}) {
+    await getDriverUser(userId);
+
+    const trip = await Trip.findOne({
+      _id: tripId,
+      driverId: userId,
+      status: { $in: ["completed", "cancelled"] },
+    });
+
+    if (!trip) {
+      throw { status: 404, message: "Completed/cancelled trip not found" };
+    }
+
+    const existing = await Rating.findOne({
+      tripId,
+      fromUserId: userId,
+    });
+
+    if (existing) {
+      throw { status: 409, message: "You already reviewed this trip" };
+    }
+
+    const rating = await Rating.create({
+      tripId,
+      fromUserId: userId,
+      toUserId: trip.riderId,
+      stars: payload.stars,
+      comment: payload.comment || "",
+    });
+
+    const riderRatingSummary = await syncUserRatingSummary(trip.riderId);
+
+    return {
+      message: "Rider review submitted successfully",
+      rating,
+      riderRatingSummary,
+    };
+  },
+
   async completeTrip(userId, tripId, payload) {
     await getDriverUser(userId);
     const profile = await getDriverProfileOrFail(userId);
@@ -871,23 +1073,41 @@ async arrivedAtPickup(userId, tripId) {
   async getTripCompletionSummary(userId, tripId) {
     await getDriverUser(userId);
 
-    const trip = await Trip.findOne({
-      _id: tripId,
-      driverId: userId,
-      status: { $in: ["completed", "cancelled"] },
-    })
-      .populate("riderId", "name profileImage ratingAvg")
-      .lean();
+    const [trip, payment, reviewGiven] = await Promise.all([
+      Trip.findOne({
+        _id: tripId,
+        driverId: userId,
+        status: { $in: ["completed", "cancelled"] },
+      })
+        .populate("riderId", "name profileImage ratingAvg ratingCount emergency")
+        .populate("vehicleId", "brand model type size licensePlate")
+        .lean(),
+      Payment.findOne({ tripId, driverId: userId }).lean(),
+      Rating.findOne({ tripId, fromUserId: userId }).lean(),
+    ]);
 
     if (!trip) {
       throw { status: 404, message: "Trip summary not found" };
     }
 
-    const payment = await Payment.findOne({ tripId: trip._id }).lean();
-
     return {
-      trip,
-      payment,
+      ...trip,
+      rider: mapRiderSummary(trip.riderId),
+      vehicle: mapVehicleSummary(trip.vehicleId),
+      fare: buildTripFareSummary(trip),
+      reviewGiven: mapReviewSummary(reviewGiven),
+      payment: payment
+        ? {
+            _id: payment._id,
+            status: payment.status,
+            currency: payment.currency || null,
+            totalFare: Number(payment.totalFare || 0),
+            driverGets: Number(payment.driverGets || 0),
+            platformGets: Number(payment.platformGets || 0),
+            paidAt: payment.paidAt || null,
+            failureMessage: payment.failureMessage || null,
+          }
+        : null,
     };
   },
 };

@@ -48,6 +48,78 @@ const getYearsSince = (date) => {
   return Math.max(1, years);
 };
 
+const mapReviewSummary = (review) => {
+  if (!review) {
+    return null;
+  }
+
+  return {
+    _id: review._id,
+    tripId: review.tripId,
+    stars: review.stars,
+    comment: review.comment || "",
+    createdAt: review.createdAt,
+  };
+};
+
+const mapDriverSummary = (driver) => {
+  if (!driver) {
+    return null;
+  }
+
+  return {
+    _id: driver._id,
+    name: driver.name,
+    profileImage: driver.profileImage || null,
+    ratingAvg: driver.ratingAvg || 0,
+    ratingCount: driver.ratingCount || 0,
+  };
+};
+
+const mapVehicleSummary = (vehicle) => {
+  if (!vehicle) {
+    return null;
+  }
+
+  return {
+    _id: vehicle._id,
+    brand: vehicle.brand,
+    model: vehicle.model,
+    type: vehicle.type,
+    size: vehicle.size,
+    licensePlate: vehicle.licensePlate || null,
+  };
+};
+
+const buildTripFareSummary = (trip) => ({
+  currency: (trip?.pricing?.currency || "USD").toUpperCase(),
+  estimatedFare: Number(trip?.pricing?.estimatedFare || 0),
+  finalFare: Number(trip?.pricing?.finalFare || 0),
+  totalFare: Number(trip?.pricing?.finalFare || trip?.pricing?.estimatedFare || 0),
+  pricePerMile: Number(trip?.pricing?.pricePerMile || 0),
+  pricePerMinute: Number(trip?.pricing?.pricePerMinute || 0),
+});
+
+const mapTripHistoryItem = (trip, reviewGiven = null) => ({
+  _id: trip._id,
+  status: trip.status,
+  paymentStatus: trip.paymentStatus,
+  createdAt: trip.createdAt,
+  updatedAt: trip.updatedAt,
+  pickup: trip.pickup,
+  dropoff: trip.dropoff,
+  pickupAddress: trip.pickup?.address || null,
+  destination: trip.dropoff?.address || null,
+  distanceMiles: Number(trip.distanceMiles || 0),
+  durationMinutes: Number(trip.durationMinutes || 0),
+  fare: buildTripFareSummary(trip),
+  rideOption: trip.rideOption || null,
+  cancellation: trip.cancellation || null,
+  driver: mapDriverSummary(trip.driverId),
+  vehicle: mapVehicleSummary(trip.vehicleId),
+  reviewGiven: mapReviewSummary(reviewGiven),
+});
+
 const getRiderUser = async (userId) => {
   const user = await User.findById(userId).lean();
 
@@ -643,6 +715,34 @@ export const riderGetRideService = {
     };
   },
 
+  async getTrips(userId) {
+    await getRiderUser(userId);
+
+    const trips = await Trip.find({ riderId: userId })
+      .sort({ createdAt: -1 })
+      .populate("driverId", "name profileImage ratingAvg ratingCount")
+      .populate("vehicleId", "brand model type size licensePlate")
+      .lean();
+
+    const tripIds = trips.map((trip) => trip._id);
+    const reviewsGiven = tripIds.length
+      ? await Rating.find({
+          fromUserId: userId,
+          tripId: { $in: tripIds },
+        }).lean()
+      : [];
+
+    const reviewsByTripId = new Map(
+      reviewsGiven.map((review) => [String(review.tripId), review])
+    );
+
+    return {
+      trips: trips.map((trip) =>
+        mapTripHistoryItem(trip, reviewsByTripId.get(String(trip._id)) || null)
+      ),
+    };
+  },
+
   async cancelRideRequest(userId, requestId) {
     await getRiderUser(userId);
 
@@ -860,19 +960,45 @@ export const riderGetRideService = {
   async getTripDetails(userId, tripId) {
     await getRiderUser(userId);
 
-    const trip = await Trip.findOne({
-      _id: tripId,
-      riderId: userId,
-    })
-      .populate("driverId", "name profileImage ratingAvg ratingCount")
-      .populate("vehicleId", "brand model type size licensePlate")
-      .lean();
+    const [trip, reviewGiven, payment] = await Promise.all([
+      Trip.findOne({
+        _id: tripId,
+        riderId: userId,
+      })
+        .populate("driverId", "name profileImage ratingAvg ratingCount")
+        .populate("vehicleId", "brand model type size licensePlate")
+        .lean(),
+      Rating.findOne({
+        tripId,
+        fromUserId: userId,
+      }).lean(),
+      Payment.findOne({
+        tripId,
+        riderId: userId,
+      }).lean(),
+    ]);
 
     if (!trip) {
       throw { status: 404, message: "Trip not found" };
     }
 
-    return trip;
+    return {
+      ...trip,
+      driver: mapDriverSummary(trip.driverId),
+      vehicle: mapVehicleSummary(trip.vehicleId),
+      fare: buildTripFareSummary(trip),
+      reviewGiven: mapReviewSummary(reviewGiven),
+      payment: payment
+        ? {
+            _id: payment._id,
+            status: payment.status,
+            currency: payment.currency || null,
+            totalFare: Number(payment.totalFare || 0),
+            paidAt: payment.paidAt || null,
+            failureMessage: payment.failureMessage || null,
+          }
+        : null,
+    };
   },
 
   async getTripPaymentSummary(userId, tripId) {
