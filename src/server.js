@@ -17,6 +17,8 @@ import legalContentRouter from "./admin/legalContent/legalContent.route.js";
 import driverHomeRouter from "./driverHome/driverHome.route.js";
 import tripChatRouter from "./messages/tripChat.route.js";
 
+mongoose.set("bufferCommands", false);
+
 const app = express();
 
 app.use(
@@ -34,6 +36,15 @@ app.get("/", (req, res) => {
   res.send("hellow");
 });
 
+app.get("/health", (req, res) => {
+  const isConnected = mongoose.connection.readyState === 1;
+
+  res.status(isConnected ? 200 : 503).json({
+    success: isConnected,
+    database: isConnected ? "connected" : "disconnected",
+  });
+});
+
 app.use("/auth", UserRouter);
 app.use("/driverOnboarding", routdriverOnboardingRoute);
 app.use("/driverOnboardingRead", driverOnboardingReadRoutes);
@@ -44,12 +55,6 @@ app.use("/admin/legal-content", legalContentRouter);
 app.use("/driverHome", driverHomeRouter);
 app.use("/chat", tripChatRouter);
 
-// MongoDB Connection
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB Connected"))
-  .catch((err) => console.error(err));
-
 // HTTP server for socket.io
 const server = http.createServer(app);
 
@@ -58,7 +63,7 @@ initSocket(server);
 
 // Start Server
 const HOST = "0.0.0.0";
-const PORT = Number(process.env.PORT) || 5000;
+const PORT = Number(process.env.PORT) || 5001;
 
 server.on("error", (error) => {
   if (error.code === "EADDRINUSE") {
@@ -72,4 +77,21 @@ server.on("error", (error) => {
   process.exit(1);
 });
 
-server.listen(PORT, HOST, () => console.log(`Server running on port ${PORT}`));
+async function startServer() {
+  if (!process.env.MONGO_URI) {
+    throw new Error("MONGO_URI is not configured");
+  }
+
+  await mongoose.connect(process.env.MONGO_URI, {
+    serverSelectionTimeoutMS: 10000,
+  });
+
+  console.log("MongoDB Connected");
+
+  server.listen(PORT, HOST, () => console.log(`Server running on port ${PORT}`));
+}
+
+startServer().catch((error) => {
+  console.error("Failed to connect to MongoDB:", error);
+  process.exit(1);
+});

@@ -10,6 +10,7 @@ const UserRouter = Router();
 // Public
 UserRouter.post("/register", authController.register);
 UserRouter.post("/login", authController.login);
+UserRouter.post("/google", authController.googleLogin);
 UserRouter.patch("/editRole",authController.editRoleController)
 
 // Email verification (OTP)

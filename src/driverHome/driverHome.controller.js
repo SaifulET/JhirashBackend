@@ -131,6 +131,19 @@ export const driverHomeController = {
     }
   },
 
+  async getEarningsSummary(req, res) {
+    try {
+      const result = await driverHomeService.getEarningsSummary(req.auth.userId, req.query);
+      return res.status(200).json({
+        success: true,
+        message: "Driver earnings summary fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
   async arrivedAtPickup(req, res) {
     try {
       const result = await driverHomeService.arrivedAtPickup(

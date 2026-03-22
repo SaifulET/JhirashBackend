@@ -61,6 +61,18 @@ export const authController = {
     }
   },
 
+  async googleLogin(req, res) {
+    try {
+      const out = await authService.googleLogin(req.body);
+      return res.json({
+        success: true,
+        data: { accessToken: out.accessToken, refreshToken: out.refreshToken, user: sanitizeUser(out.user) },
+      });
+    } catch (e) {
+      return handleError(res, e);
+    }
+  },
+
   async sendVerification(req, res) {
     try {
       const out = await authService.sendVerificationOtp(req.body);

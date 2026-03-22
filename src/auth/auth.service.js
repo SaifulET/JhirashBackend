@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import mongoose from "mongoose";
+import { OAuth2Client } from "google-auth-library";
 import { User } from "../models/User/User.model.js";
 import { AuthToken } from "../models/Auth_token/Auth_token.model.js";
 import { sendEmail } from "../core_feature/utils/mailerSender/mailer.js";
@@ -14,6 +15,8 @@ const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "refresh_secret";
 const ACCESS_EXPIRES_IN = process.env.ACCESS_EXPIRES_IN || "15m";
 const REFRESH_EXPIRES_IN = process.env.REFRESH_EXPIRES_IN || "30d";
 const OTP_TTL_MINUTES = Number(process.env.OTP_TTL_MINUTES || 10);
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 function sha256(input) {
   return crypto.createHash("sha256").update(input).digest("hex");
@@ -72,6 +75,34 @@ async function issueTokens(userId) {
   // Stateless refresh fallback (logout can't fully revoke)
   const refreshToken = jwt.sign({ sub: String(user._id) }, JWT_REFRESH_SECRET, { expiresIn: REFRESH_EXPIRES_IN });
   return { accessToken, refreshToken };
+}
+
+async function verifyGoogleIdToken(idToken) {
+  if (!GOOGLE_CLIENT_ID) {
+    throw { status: 500, code: "CONFIG_ERROR", message: "GOOGLE_CLIENT_ID is not configured" };
+  }
+
+  if (!idToken) {
+    throw { status: 400, code: "VALIDATION_ERROR", message: "idToken is required" };
+  }
+
+  let ticket;
+  try {
+    ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: GOOGLE_CLIENT_ID,
+    });
+  } catch {
+    throw { status: 401, code: "INVALID_GOOGLE_TOKEN", message: "Invalid Google token" };
+  }
+
+  const payload = ticket.getPayload();
+
+  if (!payload?.sub || !payload?.email) {
+    throw { status: 400, code: "INVALID_GOOGLE_PROFILE", message: "Google account is missing required fields" };
+  }
+
+  return payload;
 }
 
 export const authService = {
@@ -156,6 +187,72 @@ export const authService = {
 
     const ok = await bcrypt.compare(password, user.passwordHash || "");
     if (!ok) throw { status: 401, code: "INVALID_CREDENTIALS", message: "Invalid email or password" };
+
+    const { accessToken, refreshToken } = await issueTokens(user._id);
+    return { user, accessToken, refreshToken };
+  },
+
+  async googleLogin({ idToken, role }) {
+    const payload = await verifyGoogleIdToken(idToken);
+    const email = payload.email.toLowerCase();
+    const googleId = payload.sub;
+    if (role && !["rider", "driver"].includes(role)) {
+      throw { status: 400, code: "VALIDATION_ERROR", message: "Invalid role" };
+    }
+    const normalizedRole = role || undefined;
+
+    let user = await User.findOne({
+      $or: [{ googleId }, { email }],
+      isDeleted: { $ne: true },
+    });
+
+    if (!user) {
+      user = await User.create({
+        name: payload.name || email.split("@")[0],
+        email,
+        googleId,
+        profileImage: payload.picture,
+        role: normalizedRole || "rider",
+        status: "active",
+        emailVerifiedAt: payload.email_verified ? new Date() : null,
+        isDeleted: false,
+      });
+    } else {
+      if (user.status !== "active") {
+        throw { status: 403, code: "FORBIDDEN", message: "Account not active" };
+      }
+
+      let shouldSave = false;
+
+      if (!user.googleId) {
+        user.googleId = googleId;
+        shouldSave = true;
+      }
+
+      if (!user.profileImage && payload.picture) {
+        user.profileImage = payload.picture;
+        shouldSave = true;
+      }
+
+      if (!user.emailVerifiedAt && payload.email_verified) {
+        user.emailVerifiedAt = new Date();
+        shouldSave = true;
+      }
+
+      if (!user.name && payload.name) {
+        user.name = payload.name;
+        shouldSave = true;
+      }
+
+      if (!user.role && normalizedRole) {
+        user.role = normalizedRole;
+        shouldSave = true;
+      }
+
+      if (shouldSave) {
+        await user.save();
+      }
+    }
 
     const { accessToken, refreshToken } = await issueTokens(user._id);
     return { user, accessToken, refreshToken };
@@ -431,6 +528,4 @@ const updatedDoc = await User.findByIdAndUpdate(
   return updatedDoc;
   }
 };
-
-
 

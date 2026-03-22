@@ -9,6 +9,7 @@ import { RideRequest } from "../models/Ride_request/Ride_request.model.js";
 import { Trip } from "../models/Trip/Trip.model.js";
 import { Payment } from "../models/Payment/Payment.model.js";
 import { Rating } from "../models/Rating/Rating.model.js";
+import { DriverOnlineSession } from "../models/Driver_online_session/DriverOnlineSession.model.js";
 import { sendEmail } from "../core_feature/utils/mailerSender/mailer.js";
 import { stripe } from "../core_feature/utils/stripe/stripe.js";
 import { findNearbyAvailableDrivers } from "../core_feature/utils/rideMatching/rideMatching.helper.js";
@@ -267,6 +268,167 @@ const mapTripHistoryItem = (trip, reviewGiven = null) => ({
   reviewGiven: mapReviewSummary(reviewGiven),
 });
 
+const MINUTE_IN_MS = 60 * 1000;
+
+const toPositiveNumber = (value, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+};
+
+const getUtcPeriodBounds = ({ period = "week", year, month, week }) => {
+  const normalizedYear = Number(year);
+
+  if (!Number.isInteger(normalizedYear)) {
+    throw { status: 400, message: "A valid year is required" };
+  }
+
+  if (period === "year") {
+    return {
+      start: new Date(Date.UTC(normalizedYear, 0, 1, 0, 0, 0, 0)),
+      end: new Date(Date.UTC(normalizedYear + 1, 0, 1, 0, 0, 0, 0)),
+      label: String(normalizedYear),
+    };
+  }
+
+  const normalizedMonth = Number(month);
+  if (!Number.isInteger(normalizedMonth) || normalizedMonth < 1 || normalizedMonth > 12) {
+    throw { status: 400, message: "A valid month between 1 and 12 is required" };
+  }
+
+  if (period === "month") {
+    return {
+      start: new Date(Date.UTC(normalizedYear, normalizedMonth - 1, 1, 0, 0, 0, 0)),
+      end: new Date(Date.UTC(normalizedYear, normalizedMonth, 1, 0, 0, 0, 0)),
+      label: `${normalizedYear}-${String(normalizedMonth).padStart(2, "0")}`,
+    };
+  }
+
+  const normalizedWeek = Number(week);
+  if (!Number.isInteger(normalizedWeek) || normalizedWeek < 1 || normalizedWeek > 6) {
+    throw { status: 400, message: "A valid week between 1 and 6 is required" };
+  }
+
+  const monthEnd = new Date(Date.UTC(normalizedYear, normalizedMonth, 1, 0, 0, 0, 0));
+  const start = new Date(
+    Date.UTC(normalizedYear, normalizedMonth - 1, 1 + (normalizedWeek - 1) * 7, 0, 0, 0, 0)
+  );
+
+  if (start >= monthEnd) {
+    throw { status: 400, message: "Selected week is out of range for the month" };
+  }
+
+  const end = new Date(
+    Math.min(
+      monthEnd.getTime(),
+      Date.UTC(normalizedYear, normalizedMonth - 1, 1 + normalizedWeek * 7, 0, 0, 0, 0)
+    )
+  );
+
+  return {
+    start,
+    end,
+    label: `${normalizedYear}-${String(normalizedMonth).padStart(2, "0")}-week-${normalizedWeek}`,
+  };
+};
+
+const formatDuration = (minutes) => {
+  const totalMinutes = Math.max(0, Math.round(Number(minutes || 0)));
+  const hours = Math.floor(totalMinutes / 60);
+  const remainingMinutes = totalMinutes % 60;
+
+  return {
+    minutes: totalMinutes,
+    hours,
+    human: `${hours}h ${remainingMinutes}m`,
+  };
+};
+
+const buildAvailablePeriods = (trips = []) => {
+  const years = new Map();
+
+  for (const trip of trips) {
+    const date = new Date(trip.createdAt);
+    const year = date.getUTCFullYear();
+    const month = date.getUTCMonth() + 1;
+    const day = date.getUTCDate();
+    const week = Math.floor((day - 1) / 7) + 1;
+
+    if (!years.has(year)) {
+      years.set(year, new Map());
+    }
+
+    const months = years.get(year);
+    if (!months.has(month)) {
+      months.set(month, new Set());
+    }
+
+    months.get(month).add(week);
+  }
+
+  return Array.from(years.entries())
+    .sort((a, b) => b[0] - a[0])
+    .map(([year, months]) => ({
+      year,
+      months: Array.from(months.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([month, weeks]) => ({
+          month,
+          weeks: Array.from(weeks).sort((a, b) => a - b),
+        })),
+    }));
+};
+
+const calculateSessionOverlapMinutes = (session, start, end) => {
+  const sessionStart = new Date(session.startedAt).getTime();
+  const sessionEnd = new Date(session.endedAt || new Date()).getTime();
+  const overlapStart = Math.max(sessionStart, start.getTime());
+  const overlapEnd = Math.min(sessionEnd, end.getTime());
+
+  if (overlapEnd <= overlapStart) {
+    return 0;
+  }
+
+  return Number(((overlapEnd - overlapStart) / MINUTE_IN_MS).toFixed(2));
+};
+
+const ensureActiveOnlineSession = async (driverId) => {
+  const existingSession = await DriverOnlineSession.findOne({
+    driverId,
+    endedAt: null,
+  }).sort({ startedAt: -1 });
+
+  if (existingSession) {
+    return existingSession;
+  }
+
+  return DriverOnlineSession.create({
+    driverId,
+    startedAt: new Date(),
+  });
+};
+
+const closeActiveOnlineSession = async (driverId) => {
+  const activeSession = await DriverOnlineSession.findOne({
+    driverId,
+    endedAt: null,
+  }).sort({ startedAt: -1 });
+
+  if (!activeSession) {
+    return null;
+  }
+
+  const endedAt = new Date();
+  activeSession.endedAt = endedAt;
+  activeSession.durationMinutes = calculateSessionOverlapMinutes(
+    { startedAt: activeSession.startedAt, endedAt },
+    new Date(activeSession.startedAt),
+    endedAt
+  );
+  await activeSession.save();
+
+  return activeSession;
+};
+
 const syncUserRatingSummary = async (userId) => {
   const ratings = await Rating.find({ toUserId: userId }).lean();
   const ratingCount = ratings.length;
@@ -442,6 +604,7 @@ export const driverHomeService = {
     profile.isOnline = true;
     profile.isBusy = false;
     await profile.save();
+    await ensureActiveOnlineSession(userId);
 
     await emitDriverQueueSync(userId, profile, "driver_online");
 
@@ -465,6 +628,7 @@ export const driverHomeService = {
     profile.isOnline = false;
     profile.isBusy = false;
     await profile.save();
+    await closeActiveOnlineSession(userId);
 
     emitToUser(userId, "ride-request:queue", {
       requests: [],
@@ -707,6 +871,162 @@ export const driverHomeService = {
       trips: trips.map((trip) =>
         mapTripHistoryItem(trip, reviewsByTripId.get(String(trip._id)) || null)
       ),
+    };
+  },
+
+  async getEarningsSummary(userId, query = {}) {
+    const user = await getDriverUser(userId);
+    await getDriverProfileOrFail(userId);
+
+    const period = ["week", "month", "year"].includes(query.period) ? query.period : "week";
+
+    const completedTrips = await Trip.find({
+      driverId: userId,
+      status: "completed",
+    })
+      .select("createdAt pricing distanceMiles durationMinutes paymentStatus")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const availablePeriods = buildAvailablePeriods(completedTrips);
+
+    const fallbackDate = completedTrips[0]?.createdAt || user.createdAt || new Date();
+    const fallbackYear = new Date(fallbackDate).getUTCFullYear();
+    const fallbackMonth = new Date(fallbackDate).getUTCMonth() + 1;
+    const fallbackWeek = Math.floor((new Date(fallbackDate).getUTCDate() - 1) / 7) + 1;
+
+    const { start, end, label } = getUtcPeriodBounds({
+      period,
+      year: query.year ?? fallbackYear,
+      month: query.month ?? fallbackMonth,
+      week: query.week ?? fallbackWeek,
+    });
+
+    const filteredTrips = completedTrips.filter((trip) => {
+      const createdAt = new Date(trip.createdAt);
+      return createdAt >= start && createdAt < end;
+    });
+
+    const [periodRatings, overallRatings, onlineSessions, allOnlineSessions] = await Promise.all([
+      Rating.find({
+        toUserId: userId,
+        createdAt: { $gte: start, $lt: end },
+      })
+        .select("stars")
+        .lean(),
+      Rating.find({ toUserId: userId })
+        .select("stars")
+        .lean(),
+      DriverOnlineSession.find({
+        driverId: userId,
+        startedAt: { $lt: end },
+        $or: [{ endedAt: null }, { endedAt: { $gt: start } }],
+      })
+        .select("startedAt endedAt durationMinutes")
+        .lean(),
+      DriverOnlineSession.find({
+        driverId: userId,
+      })
+        .select("startedAt endedAt durationMinutes")
+        .lean(),
+    ]);
+
+    const earnings = filteredTrips.reduce((sum, trip) => sum + computeDriverGets(trip), 0);
+    const tripCount = filteredTrips.length;
+    const totalDistanceMiles = filteredTrips.reduce(
+      (sum, trip) => sum + toPositiveNumber(trip.distanceMiles),
+      0
+    );
+    const totalDurationMinutes = filteredTrips.reduce(
+      (sum, trip) => sum + toPositiveNumber(trip.durationMinutes),
+      0
+    );
+    const paidTrips = filteredTrips.filter((trip) => trip.paymentStatus === "paid").length;
+    const unpaidTrips = filteredTrips.filter((trip) => trip.paymentStatus !== "paid").length;
+    const onlineMinutes = onlineSessions.reduce(
+      (sum, session) => sum + calculateSessionOverlapMinutes(session, start, end),
+      0
+    );
+    const overallOnlineMinutes = allOnlineSessions.reduce(
+      (sum, session) =>
+        sum +
+        calculateSessionOverlapMinutes(
+          session,
+          new Date(session.startedAt),
+          new Date(session.endedAt || new Date())
+        ),
+      0
+    );
+    const overallEarnings = completedTrips.reduce((sum, trip) => sum + computeDriverGets(trip), 0);
+    const overallDistanceMiles = completedTrips.reduce(
+      (sum, trip) => sum + toPositiveNumber(trip.distanceMiles),
+      0
+    );
+    const overallDurationMinutes = completedTrips.reduce(
+      (sum, trip) => sum + toPositiveNumber(trip.durationMinutes),
+      0
+    );
+
+    const periodRatingCount = periodRatings.length;
+    const periodRatingAverage =
+      periodRatingCount > 0
+        ? Number(
+            (
+              periodRatings.reduce((sum, rating) => sum + Number(rating.stars || 0), 0) /
+              periodRatingCount
+            ).toFixed(1)
+          )
+        : 0;
+
+    const overallRatingCount = overallRatings.length;
+    const overallRatingAverage =
+      overallRatingCount > 0
+        ? Number(
+            (
+              overallRatings.reduce((sum, rating) => sum + Number(rating.stars || 0), 0) /
+              overallRatingCount
+            ).toFixed(1)
+          )
+        : 0;
+
+    return {
+      filter: {
+        period,
+        year: start.getUTCFullYear(),
+        month: period === "year" ? null : start.getUTCMonth() + 1,
+        week: period === "week" ? Math.floor((start.getUTCDate() - 1) / 7) + 1 : null,
+        label,
+        startAt: start,
+        endAt: end,
+      },
+      currency: "USD",
+      summary: {
+        earnings: Number(earnings.toFixed(2)),
+        trips: tripCount,
+        paidTrips,
+        unpaidTrips,
+        totalDistanceMiles: Number(totalDistanceMiles.toFixed(2)),
+        tripDuration: formatDuration(totalDurationMinutes),
+        onlineTime: formatDuration(onlineMinutes),
+        rating: {
+          periodAverage: periodRatingAverage,
+          periodCount: periodRatingCount,
+          overallAverage: overallRatingAverage,
+          overallCount: overallRatingCount,
+        },
+      },
+      overall: {
+        earnings: Number(overallEarnings.toFixed(2)),
+        trips: completedTrips.length,
+        totalDistanceMiles: Number(overallDistanceMiles.toFixed(2)),
+        tripDuration: formatDuration(overallDurationMinutes),
+        onlineTime: formatDuration(overallOnlineMinutes),
+        rating: {
+          average: overallRatingAverage,
+          count: overallRatingCount,
+        },
+      },
+      availablePeriods,
     };
   },
 

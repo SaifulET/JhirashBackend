@@ -24,6 +24,7 @@ driverHomeRouter.patch("/ride-requests/:requestId/accept",requireAuth, driverHom
 // active trip
 driverHomeRouter.get("/trip/active",requireAuth, driverHomeController.getActiveTrip);
 driverHomeRouter.get("/trips", driverHomeController.getTrips);
+driverHomeRouter.get("/earnings-summary", driverHomeController.getEarningsSummary);
 driverHomeRouter.patch("/trip/:tripId/arrived-pickup",requireAuth, driverHomeController.arrivedAtPickup);
 driverHomeRouter.patch("/trip/:tripId/verify-otp", driverHomeController.verifyOtp);
 
