@@ -207,6 +207,23 @@ export const riderGetRideController = {
     }
   },
 
+  async changeRideRequestDestination(req, res) {
+    try {
+      const result = await riderGetRideService.changeRideRequestDestination(
+        req.auth.userId,
+        req.params.requestId,
+        req.body
+      );
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
   async getDriverProfile(req, res) {
     try {
       const result = await riderGetRideService.getDriverProfile(req.auth.userId, req.params.tripId);

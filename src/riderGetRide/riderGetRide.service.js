@@ -17,6 +17,7 @@ import {
   stripe,
 } from "../core_feature/utils/stripe/stripe.js";
 import { findNearbyAvailableDrivers } from "../core_feature/utils/rideMatching/rideMatching.helper.js";
+import { emitDriverQueuePayloadToUsers } from "../driverHome/driverRideRequestQueue.helper.js";
 import { emitToUser, emitToUsers } from "../messages/socketRealtime.helper.js";
 
 const ACTIVE_TRIP_STATUSES = ["accepted", "driver_arrived", "otp_verified", "started"];
@@ -229,6 +230,65 @@ const buildRideOptions = ({ config, estimatedMiles = 0, estimatedMinutes = 0 }) 
       estimatedMinutes,
     }),
   }));
+};
+
+const buildDropoffPayload = (dropoff = {}) => {
+  if (
+    !dropoff ||
+    !dropoff.address ||
+    !Number.isFinite(Number(dropoff.lng)) ||
+    !Number.isFinite(Number(dropoff.lat))
+  ) {
+    throw {
+      status: 400,
+      message: "dropoff.address, dropoff.lng and dropoff.lat are required",
+    };
+  }
+
+  return {
+    address: String(dropoff.address).trim(),
+    point: {
+      type: "Point",
+      coordinates: [Number(dropoff.lng), Number(dropoff.lat)],
+    },
+  };
+};
+
+const buildRideLocationPayload = (location = {}, fieldName = "location") => {
+  if (
+    !location ||
+    !location.address ||
+    !Number.isFinite(Number(location.lng)) ||
+    !Number.isFinite(Number(location.lat))
+  ) {
+    throw {
+      status: 400,
+      message: `${fieldName}.address, ${fieldName}.lng and ${fieldName}.lat are required`,
+    };
+  }
+
+  return {
+    address: String(location.address).trim(),
+    point: {
+      type: "Point",
+      coordinates: [Number(location.lng), Number(location.lat)],
+    },
+  };
+};
+
+const toUniqueStringIds = (items = []) =>
+  [...new Set(items.filter(Boolean).map((item) => String(item)))];
+
+const splitDriverIdGroups = ({ previousDrivers = [], nextDrivers = [] }) => {
+  const previousIds = toUniqueStringIds(previousDrivers.map((driver) => driver.driverId));
+  const nextIds = toUniqueStringIds(nextDrivers.map((driver) => driver.driverId));
+
+  return {
+    added: nextIds.filter((id) => !previousIds.includes(id)),
+    removed: previousIds.filter((id) => !nextIds.includes(id)),
+    retained: nextIds.filter((id) => previousIds.includes(id)),
+    current: nextIds,
+  };
 };
 
 const getCurrentRequestOrTrip = async (userId) => {
@@ -728,6 +788,10 @@ export const riderGetRideService = {
         request: liveRideRequest,
       }
     );
+    await emitDriverQueuePayloadToUsers(
+      nearbyDrivers.map((driver) => driver.driverId),
+      "request_created"
+    );
 
     return {
       rideRequest: liveRideRequest,
@@ -814,6 +878,10 @@ export const riderGetRideService = {
         reason: "cancelled",
       }
     );
+    await emitDriverQueuePayloadToUsers(
+      [...nearbyDrivers.map((driver) => driver.driverId), rideRequest.matchedDriverId],
+      "request_cancelled"
+    );
 
     return {
       message: "Ride request cancelled successfully",
@@ -860,19 +928,145 @@ export const riderGetRideService = {
     };
   },
 
+  async changeRideRequestDestination(userId, requestId, payload) {
+    await getRiderUser(userId);
 
+    if (!payload?.pickup && !payload?.dropoff) {
+      throw { status: 400, message: "pickup or dropoff is required" };
+    }
+
+    const rideRequest = await RideRequest.findOne({
+      _id: requestId,
+      riderId: userId,
+      status: { $in: ACTIVE_REQUEST_STATUSES },
+    });
+
+    if (!rideRequest) {
+      throw { status: 404, message: "Active ride request not found" };
+    }
+
+    const config = await getActiveFareConfig();
+    const preference = rideRequest.preference || {};
+    const shouldUpdatePickup = Boolean(payload?.pickup);
+    const shouldUpdateDropoff = Boolean(payload?.dropoff);
+
+    const previousNearbyDrivers =
+      shouldUpdatePickup &&
+      rideRequest.status === "searching" &&
+      rideRequest.pickup?.point?.coordinates?.length === 2
+        ? await findNearbyDriversForPickup({
+            lng: rideRequest.pickup.point.coordinates[0],
+            lat: rideRequest.pickup.point.coordinates[1],
+          })
+        : [];
+
+    const newQuote = calculateEstimate({
+      config,
+      vehicleType: preference.vehicleType || "car",
+      tier: preference.tier || "regular",
+      size: preference.size || "normal",
+      estimatedMiles: payload?.estimatedMiles ?? rideRequest.quote?.estimatedMiles ?? 0,
+      estimatedMinutes: payload?.estimatedMinutes ?? rideRequest.quote?.estimatedMinutes ?? 0,
+    });
+
+    if (shouldUpdatePickup) {
+      rideRequest.pickup = buildRideLocationPayload(payload.pickup, "pickup");
+    }
+
+    if (shouldUpdateDropoff) {
+      rideRequest.dropoff = buildRideLocationPayload(payload.dropoff, "dropoff");
+    }
+
+    rideRequest.quote = {
+      ...rideRequest.quote,
+      ...newQuote,
+    };
+
+    await rideRequest.save();
+
+    const liveRideRequest = await getRideRequestRealtimePayload(rideRequest._id);
+    const currentNearbyDrivers =
+      rideRequest.status === "searching" &&
+      rideRequest.pickup?.point?.coordinates?.length === 2
+        ? await findNearbyDriversForPickup({
+            lng: rideRequest.pickup.point.coordinates[0],
+            lat: rideRequest.pickup.point.coordinates[1],
+          })
+        : [];
+
+    const { added, removed, retained, current } = splitDriverIdGroups({
+      previousDrivers: previousNearbyDrivers,
+      nextDrivers: currentNearbyDrivers,
+    });
+
+    emitToUser(userId, "ride-request:updated", {
+      request: liveRideRequest,
+      quote: newQuote,
+      nearbyDriverCount: current.length,
+    });
+
+    if (rideRequest.matchedDriverId) {
+      emitToUser(rideRequest.matchedDriverId, "ride-request:updated", {
+        request: liveRideRequest,
+        quote: newQuote,
+      });
+    }
+
+    if (rideRequest.status === "searching") {
+      if (shouldUpdatePickup) {
+        emitToUsers(removed, "ride-request:removed", {
+          requestId: String(rideRequest._id),
+          reason: "pickup_changed",
+        });
+
+        emitToUsers(added, "ride-request:new", {
+          request: liveRideRequest,
+        });
+
+        emitToUsers(retained, "ride-request:updated", {
+          request: liveRideRequest,
+          quote: newQuote,
+        });
+      } else {
+        emitToUsers(current, "ride-request:updated", {
+          request: liveRideRequest,
+          quote: newQuote,
+        });
+      }
+
+      await emitDriverQueuePayloadToUsers(
+        [...removed, ...added, ...retained, ...current],
+        shouldUpdatePickup ? "pickup_changed" : "request_updated"
+      );
+    }
+
+    return {
+      message: "Ride request locations changed successfully",
+      rideRequest: liveRideRequest,
+      newQuote,
+      nearbyDrivers: currentNearbyDrivers,
+    };
+  },
 
   async changeDestination(userId, tripId, payload) {
     await getRiderUser(userId);
 
+    if (!payload?.pickup && !payload?.dropoff) {
+      throw { status: 400, message: "pickup or dropoff is required" };
+    }
+
     const trip = await Trip.findOne({
       _id: tripId,
       riderId: userId,
-      status: "started",
+      status: { $in: ACTIVE_TRIP_STATUSES },
     });
 
     if (!trip) {
-      throw { status: 404, message: "Started trip not found" };
+      throw { status: 404, message: "Active trip not found" };
+    }
+
+    if (payload?.pickup && trip.status === "started") {
+      throw { status: 400, message: "Pickup cannot be changed after the trip has started" };
     }
 
     const config = await getActiveFareConfig();
@@ -886,27 +1080,71 @@ export const riderGetRideService = {
       vehicleType,
       tier,
       size,
-      estimatedMiles: payload.estimatedMiles || trip.distanceMiles || 0,
-      estimatedMinutes: payload.estimatedMinutes || trip.durationMinutes || 0,
+      estimatedMiles:
+        payload?.estimatedMiles ?? trip.distanceMiles ?? trip.pricing?.estimatedMiles ?? 0,
+      estimatedMinutes:
+        payload?.estimatedMinutes ?? trip.durationMinutes ?? trip.pricing?.estimatedMinutes ?? 0,
     });
 
-    trip.dropoff = {
-      address: payload.dropoff.address,
-      point: {
-        type: "Point",
-        coordinates: [payload.dropoff.lng, payload.dropoff.lat],
-      },
-    };
+    if (payload?.pickup) {
+      trip.pickup = buildRideLocationPayload(payload.pickup, "pickup");
+    }
 
+    if (payload?.dropoff) {
+      trip.dropoff = buildRideLocationPayload(payload.dropoff, "dropoff");
+    }
+
+    trip.pricing.currency = newFare.currency;
     trip.pricing.estimatedFare = newFare.estimatedFare;
     trip.pricing.baseFare = newFare.baseFare;
     trip.pricing.pricePerMile = newFare.pricePerMile;
     trip.pricing.pricePerMinute = newFare.pricePerMinute;
+    trip.pricing.driverSharePercent = newFare.driverSharePercent;
+    if (trip.status !== "started") {
+      trip.pricing.finalFare = newFare.estimatedFare;
+    }
 
     await trip.save();
 
+    if (trip.requestId) {
+      const requestUpdate = {
+        quote: {
+          ...newQuote,
+        },
+      };
+
+      if (payload?.pickup) {
+        requestUpdate.pickup = buildRideLocationPayload(payload.pickup, "pickup");
+      }
+
+      if (payload?.dropoff) {
+        requestUpdate.dropoff = buildRideLocationPayload(payload.dropoff, "dropoff");
+      }
+
+      await RideRequest.findOneAndUpdate(
+        {
+          _id: trip.requestId,
+          riderId: userId,
+          status: { $in: ACTIVE_REQUEST_STATUSES },
+        },
+        { $set: requestUpdate }
+      );
+    }
+
+    emitToUser(userId, "trip:destination-changed", {
+      tripId: String(trip._id),
+      trip,
+      newFare,
+    });
+
+    emitToUser(trip.driverId, "trip:destination-changed", {
+      tripId: String(trip._id),
+      trip,
+      newFare,
+    });
+
     return {
-      message: "Destination changed successfully",
+      message: "Trip locations changed successfully",
       trip,
       newFare,
     };

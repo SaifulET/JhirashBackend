@@ -19,6 +19,7 @@ import {
 import { emitToUser, emitToUsers } from "../messages/socketRealtime.helper.js";
 import {
   buildRideRequestQuery,
+  emitDriverQueuePayloadToUsers,
   getDriverQueuePayload,
   getNearbyRideRequestsPayload,
   RIDE_REQUEST_RADIUS_KM,
@@ -833,6 +834,10 @@ export const driverHomeService = {
         }
       );
 
+      await emitDriverQueuePayloadToUsers(
+        nearbyDriverProfiles.map((item) => item.userId),
+        "request_matched"
+      );
       await emitDriverQueueSync(userId, profile, "request_accepted");
 
       return {
