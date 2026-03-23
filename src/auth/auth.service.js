@@ -10,8 +10,13 @@ import { sendEmail } from "../core_feature/utils/mailerSender/mailer.js";
 
 const RefreshToken = mongoose.models.RefreshToken; // optional
 
-const JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || "access_secret";
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "refresh_secret";
+const JWT_ACCESS_SECRET =
+  process.env.ACCESS_TOKEN_SECRET ||
+  process.env.JWT_ACCESS_SECRET ||
+  process.env.JWT_SECRET ||
+  "access_secret";
+const JWT_REFRESH_SECRET =
+  process.env.REFRESH_TOKEN_SECRET || process.env.JWT_REFRESH_SECRET || "refresh_secret";
 const ACCESS_EXPIRES_IN = process.env.ACCESS_EXPIRES_IN || "15m";
 const REFRESH_EXPIRES_IN = process.env.REFRESH_EXPIRES_IN || "30d";
 const OTP_TTL_MINUTES = Number(process.env.OTP_TTL_MINUTES || 10);

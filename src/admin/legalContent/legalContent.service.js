@@ -55,6 +55,25 @@ const mapLegalContent = (doc) => {
   };
 };
 
+const mapGroupedLegalContents = (items = []) => {
+  const grouped = {
+    termsAndConditions: [],
+    privacyPolicy: [],
+  };
+
+  for (const item of items) {
+    if (item.type === "terms-and-conditions") {
+      grouped.termsAndConditions.push(item);
+    }
+
+    if (item.type === "privacy-policy") {
+      grouped.privacyPolicy.push(item);
+    }
+  }
+
+  return grouped;
+};
+
 const getAdminUser = async (userId) => {
   const user = await User.findById(userId).lean();
 
@@ -70,10 +89,10 @@ const getAdminUser = async (userId) => {
 };
 
 export const legalContentService = {
-  async createContent(userId, payload = {}) {
+  async createContent(userId, type, payload = {}) {
     await getAdminUser(userId);
 
-    const type = assertSupportedType(payload.type);
+    const normalizedType = assertSupportedType(type || payload.type);
     const contentHtml = String(payload.contentHtml || "").trim();
     const plainText = stripHtml(payload.plainText || contentHtml);
 
@@ -85,13 +104,8 @@ export const legalContentService = {
       throw { status: 400, message: "contentHtml is required" };
     }
 
-    const existing = await LegalContent.findOne({ type }).lean();
-    if (existing) {
-      throw { status: 409, message: `${type} already exists` };
-    }
-
     const content = await LegalContent.create({
-      type,
+      type: normalizedType,
       title: payload.title.trim(),
       contentHtml,
       contentDelta: payload.contentDelta ?? null,
@@ -107,16 +121,43 @@ export const legalContentService = {
   async getAllContent(userId) {
     await getAdminUser(userId);
 
-    const contents = await LegalContent.find().sort({ createdAt: 1 }).lean();
+    const contents = await LegalContent.find().sort({ createdAt: -1 }).lean();
+    const items = contents.map(mapLegalContent);
+
     return {
+      items,
+      grouped: mapGroupedLegalContents(items),
+    };
+  },
+
+  async getContentByType(type, options = {}) {
+    const normalizedType = assertSupportedType(type);
+    const filter = { type: normalizedType };
+
+    if (options.onlyPublished) {
+      filter.isPublished = true;
+    }
+
+    const contents = await LegalContent.find(filter).sort({ createdAt: -1 }).lean();
+
+    return {
+      type: normalizedType,
       items: contents.map(mapLegalContent),
     };
   },
 
-  async getContentByType(type) {
+  async getContentById(type, contentId, options = {}) {
     const normalizedType = assertSupportedType(type);
+    const filter = {
+      _id: contentId,
+      type: normalizedType,
+    };
 
-    const content = await LegalContent.findOne({ type: normalizedType }).lean();
+    if (options.onlyPublished) {
+      filter.isPublished = true;
+    }
+
+    const content = await LegalContent.findOne(filter).lean();
     if (!content) {
       throw { status: 404, message: "Legal content not found" };
     }
@@ -124,7 +165,7 @@ export const legalContentService = {
     return mapLegalContent(content);
   },
 
-  async updateContent(userId, type, payload = {}) {
+  async updateContent(userId, type, contentId, payload = {}) {
     await getAdminUser(userId);
 
     const normalizedType = assertSupportedType(type);
@@ -161,7 +202,7 @@ export const legalContentService = {
     }
 
     const content = await LegalContent.findOneAndUpdate(
-      { type: normalizedType },
+      { _id: contentId, type: normalizedType },
       { $set: update },
       { new: true }
     ).lean();
@@ -173,11 +214,14 @@ export const legalContentService = {
     return mapLegalContent(content);
   },
 
-  async deleteContent(userId, type) {
+  async deleteContent(userId, type, contentId) {
     await getAdminUser(userId);
 
     const normalizedType = assertSupportedType(type);
-    const content = await LegalContent.findOneAndDelete({ type: normalizedType }).lean();
+    const content = await LegalContent.findOneAndDelete({
+      _id: contentId,
+      type: normalizedType,
+    }).lean();
 
     if (!content) {
       throw { status: 404, message: "Legal content not found" };
@@ -187,5 +231,15 @@ export const legalContentService = {
       message: "Legal content deleted successfully",
       deleted: mapLegalContent(content),
     };
+  },
+
+  async getAdminContentByType(userId, type) {
+    await getAdminUser(userId);
+    return this.getContentByType(type);
+  },
+
+  async getAdminContentById(userId, type, contentId) {
+    await getAdminUser(userId);
+    return this.getContentById(type, contentId);
   },
 };

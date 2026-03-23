@@ -1,7 +1,11 @@
 // src/middlewares/requireAuth.js
 import jwt from "jsonwebtoken";
 
-const JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || "access_secret";
+const ACCESS_TOKEN_SECRET =
+  process.env.ACCESS_TOKEN_SECRET ||
+  process.env.JWT_ACCESS_SECRET ||
+  process.env.JWT_SECRET ||
+  "access_secret";
 
 export function requireAuth(req, res, next) {
   try {
@@ -17,7 +21,7 @@ export function requireAuth(req, res, next) {
     }
     
 
-    const payload = jwt.verify(token, JWT_ACCESS_SECRET);
+    const payload = jwt.verify(token, ACCESS_TOKEN_SECRET);
     req.auth = { userId: payload.sub, role: payload.role };
     return next();
   } catch {

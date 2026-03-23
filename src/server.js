@@ -5,6 +5,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import mongoose from "mongoose";
 import http from "http";
+import { LegalContent } from "./models/Legal_content/Legal_content.model.js";
 
 import { initSocket } from "./messages/socket.js";
 
@@ -15,6 +16,7 @@ import riderGetRideRouter from "./riderGetRide/riderGetRide.route.js";
 import adminConfigRouter from "./admin/config/fareConfig.route.js";
 import legalContentRouter from "./admin/legalContent/legalContent.route.js";
 import adminDriverManagementRouter from "./admin/driverManagement/driverManagement.route.js";
+import adminAuthRouter from "./admin/auth/adminAuth.route.js";
 import driverHomeRouter from "./driverHome/driverHome.route.js";
 import tripChatRouter from "./messages/tripChat.route.js";
 
@@ -50,6 +52,7 @@ app.use("/auth", UserRouter);
 app.use("/driverOnboarding", routdriverOnboardingRoute);
 app.use("/driverOnboardingRead", driverOnboardingReadRoutes);
 app.use("/riderGetRide", riderGetRideRouter);
+app.use("/admin/auth", adminAuthRouter);
 app.use("/admin/config", adminConfigRouter);
 app.use("/admin/drivers", adminDriverManagementRouter);
 app.use("/legal-content", legalContentRouter);
@@ -87,6 +90,7 @@ async function startServer() {
   await mongoose.connect(process.env.MONGO_URI, {
     serverSelectionTimeoutMS: 10000,
   });
+  await LegalContent.syncIndexes();
 
   console.log("MongoDB Connected");
 

@@ -29,7 +29,10 @@ export const initSocket = (httpServer) => {
 
       const payload = jwt.verify(
         token,
-        process.env.JWT_SECRET || process.env.JWT_ACCESS_SECRET || "access_secret"
+        process.env.ACCESS_TOKEN_SECRET ||
+          process.env.JWT_SECRET ||
+          process.env.JWT_ACCESS_SECRET ||
+          "access_secret"
       );
 
       socket.user = {

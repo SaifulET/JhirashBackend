@@ -8,7 +8,6 @@ const LegalContentSchema = new Schema(
       type: String,
       enum: ["terms-and-conditions", "privacy-policy"],
       required: true,
-      unique: true,
       index: true,
     },
     title: {
@@ -46,5 +45,7 @@ const LegalContentSchema = new Schema(
   },
   { timestamps: true, versionKey: false }
 );
+
+LegalContentSchema.index({ type: 1, createdAt: -1 });
 
 export const LegalContent = model("LegalContent", LegalContentSchema);

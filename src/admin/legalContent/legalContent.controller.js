@@ -10,7 +10,11 @@ const handleError = (res, error) => {
 export const legalContentController = {
   async createContent(req, res) {
     try {
-      const result = await legalContentService.createContent(req.auth.userId, req.body);
+      const result = await legalContentService.createContent(
+        req.auth.userId,
+        req.params.type,
+        req.body
+      );
       return res.status(201).json({
         success: true,
         message: "Legal content created successfully",
@@ -36,7 +40,59 @@ export const legalContentController = {
 
   async getContentByType(req, res) {
     try {
-      const result = await legalContentService.getContentByType(req.params.type);
+      const result = await legalContentService.getContentByType(req.params.type, {
+        onlyPublished: true,
+      });
+      return res.status(200).json({
+        success: true,
+        message: "Legal contents fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
+  async getContentById(req, res) {
+    try {
+      const result = await legalContentService.getContentById(
+        req.params.type,
+        req.params.contentId,
+        { onlyPublished: true }
+      );
+      return res.status(200).json({
+        success: true,
+        message: "Legal content fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
+  async getAdminContentByType(req, res) {
+    try {
+      const result = await legalContentService.getAdminContentByType(
+        req.auth.userId,
+        req.params.type
+      );
+      return res.status(200).json({
+        success: true,
+        message: "Legal contents fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
+  async getAdminContentById(req, res) {
+    try {
+      const result = await legalContentService.getAdminContentById(
+        req.auth.userId,
+        req.params.type,
+        req.params.contentId
+      );
       return res.status(200).json({
         success: true,
         message: "Legal content fetched successfully",
@@ -52,6 +108,7 @@ export const legalContentController = {
       const result = await legalContentService.updateContent(
         req.auth.userId,
         req.params.type,
+        req.params.contentId,
         req.body
       );
       return res.status(200).json({
@@ -66,7 +123,11 @@ export const legalContentController = {
 
   async deleteContent(req, res) {
     try {
-      const result = await legalContentService.deleteContent(req.auth.userId, req.params.type);
+      const result = await legalContentService.deleteContent(
+        req.auth.userId,
+        req.params.type,
+        req.params.contentId
+      );
       return res.status(200).json({
         success: true,
         message: result.message,
