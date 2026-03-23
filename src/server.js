@@ -14,6 +14,7 @@ import driverOnboardingReadRoutes from "./driver/driver_documents/driver_documen
 import riderGetRideRouter from "./riderGetRide/riderGetRide.route.js";
 import adminConfigRouter from "./admin/config/fareConfig.route.js";
 import legalContentRouter from "./admin/legalContent/legalContent.route.js";
+import adminDriverManagementRouter from "./admin/driverManagement/driverManagement.route.js";
 import driverHomeRouter from "./driverHome/driverHome.route.js";
 import tripChatRouter from "./messages/tripChat.route.js";
 
@@ -50,6 +51,7 @@ app.use("/driverOnboarding", routdriverOnboardingRoute);
 app.use("/driverOnboardingRead", driverOnboardingReadRoutes);
 app.use("/riderGetRide", riderGetRideRouter);
 app.use("/admin/config", adminConfigRouter);
+app.use("/admin/drivers", adminDriverManagementRouter);
 app.use("/legal-content", legalContentRouter);
 app.use("/admin/legal-content", legalContentRouter);
 app.use("/driverHome", driverHomeRouter);

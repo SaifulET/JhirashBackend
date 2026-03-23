@@ -13,6 +13,13 @@ const REQUIRED_DOCUMENT_TYPES = [
   "vehicle_registration",
 ];
 
+const normalizeDocumentStatus = (status) => {
+  if (status === "complete") return "approved";
+  if (status === "need_attention") return "rejected";
+  if (status === "submitted") return "in_review";
+  return status;
+};
+
 const getDriverUser = async (userId) => {
   const user = await User.findById(userId)
     .select("_id role isDeleted")
@@ -139,14 +146,15 @@ const updateDriverProfileSummary = async (userId) => {
   const existingTypes = new Set();
 
   for (const doc of docs) {
+    const normalizedStatus = normalizeDocumentStatus(doc.status);
     existingTypes.add(doc.type);
 
-    if (doc.status === "approved") {
+    if (normalizedStatus === "approved") {
       approvedTypes.add(doc.type);
-    } else if (doc.status === "rejected") {
+    } else if (normalizedStatus === "rejected") {
       hasRejected = true;
       rejectedDocsCount++;
-    } else if (doc.status === "submitted" || doc.status === "in_review") {
+    } else if (normalizedStatus === "in_review") {
       hasInReview = true;
       pendingDocsCount++;
     }
@@ -455,7 +463,7 @@ async  getStatus(userId) {
 
     const docMap = {};
     for (const doc of documents) {
-      docMap[doc.type] = doc.status;
+      docMap[doc.type] = normalizeDocumentStatus(doc.status);
     }
 
     const missingDocuments = REQUIRED_DOCUMENT_TYPES.filter((type) => !docMap[type]);
@@ -522,19 +530,20 @@ async  getStatus(userId) {
 
 
   async updateStatus({ adminUserId, driverId, type, status, rejectionReason }) {
-
-  const allowedDocStatuses = new Set(["in_review", "complete", "need_attention"]);
+  const allowedDocStatuses = new Set(["in_review", "approved", "rejected", "complete", "need_attention"]);
 
   if (!allowedDocStatuses.has(status)) {
     throw { status: 400, message: "Invalid status value" };
   }
 
+  const nextStatus = normalizeDocumentStatus(status);
+
   const document = await DriverDocument.findOneAndUpdate(
     { driverId, type },
     {
       $set: {
-        status,
-        rejectionReason: status === "need_attention" ? rejectionReason || null : null,
+        status: nextStatus,
+        rejectionReason: nextStatus === "rejected" ? rejectionReason || null : null,
         reviewedBy: adminUserId,
         reviewedAt: new Date()
       }
@@ -546,15 +555,15 @@ async  getStatus(userId) {
     throw { status: 404, message: "Document not found" };
   }
 
-  await DriverProfile.updateOne(
-    { userId: driverId },
-    { $set: { status } },
-    { upsert: true }
-  );
+  const driverProfile = await updateDriverProfileSummary(driverId);
 
   return {
     document,
-    status
+    status: nextStatus,
+    driverProfile: {
+      documentsStatus: driverProfile.documentsStatus,
+      requiredActionsCount: driverProfile.requiredActionsCount,
+    },
   };
 }
 };
