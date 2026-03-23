@@ -273,6 +273,8 @@ const mapTripHistoryItem = (trip, reviewGiven = null) => ({
 });
 
 const MINUTE_IN_MS = 60 * 1000;
+const EARTH_RADIUS_METERS = 6371000;
+const APPROX_CITY_SPEED_METERS_PER_MINUTE = 300;
 
 const toPositiveNumber = (value, fallback = 0) => {
   const parsed = Number(value);
@@ -346,6 +348,113 @@ const formatDuration = (minutes) => {
     human: `${hours}h ${remainingMinutes}m`,
   };
 };
+
+const toRadians = (degrees) => (Number(degrees) * Math.PI) / 180;
+
+const calculateDistanceMeters = (fromCoordinates = [], toCoordinates = []) => {
+  if (
+    !Array.isArray(fromCoordinates) ||
+    !Array.isArray(toCoordinates) ||
+    fromCoordinates.length !== 2 ||
+    toCoordinates.length !== 2
+  ) {
+    return null;
+  }
+
+  const [fromLng, fromLat] = fromCoordinates.map(Number);
+  const [toLng, toLat] = toCoordinates.map(Number);
+
+  if (
+    !Number.isFinite(fromLng) ||
+    !Number.isFinite(fromLat) ||
+    !Number.isFinite(toLng) ||
+    !Number.isFinite(toLat)
+  ) {
+    return null;
+  }
+
+  const dLat = toRadians(toLat - fromLat);
+  const dLng = toRadians(toLng - fromLng);
+  const startLat = toRadians(fromLat);
+  const endLat = toRadians(toLat);
+
+  const haversine =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(startLat) * Math.cos(endLat) * Math.sin(dLng / 2) ** 2;
+
+  return Math.round(2 * EARTH_RADIUS_METERS * Math.asin(Math.sqrt(haversine)));
+};
+
+const buildEtaMinutes = (distanceMeters) => {
+  if (!Number.isFinite(Number(distanceMeters))) {
+    return null;
+  }
+
+  return Math.max(1, Math.ceil(Number(distanceMeters) / APPROX_CITY_SPEED_METERS_PER_MINUTE));
+};
+
+const buildDriverProgressPayload = ({ driverProfile, targetPoint, targetLabel = "pickup" }) => {
+  const driverCoordinates = driverProfile?.location?.point?.coordinates;
+  const targetCoordinates = targetPoint?.coordinates;
+  const distanceMeters = calculateDistanceMeters(driverCoordinates, targetCoordinates);
+
+  if (!Number.isFinite(distanceMeters)) {
+    return {
+      target: targetLabel,
+      currentLocation: driverProfile?.location || null,
+      distanceMeters: null,
+      distanceKm: null,
+      etaMinutes: null,
+      updatedAt: driverProfile?.location?.updatedAt || null,
+    };
+  }
+
+  return {
+    target: targetLabel,
+    currentLocation: driverProfile?.location || null,
+    distanceMeters,
+    distanceKm: Number((distanceMeters / 1000).toFixed(2)),
+    etaMinutes: buildEtaMinutes(distanceMeters),
+    updatedAt: driverProfile?.location?.updatedAt || null,
+  };
+};
+
+const buildRealtimeMatchedPayload = ({
+  trip,
+  rideRequest,
+  driverUser,
+  driverProfile,
+  vehicle,
+}) => ({
+  requestId: String(rideRequest._id),
+  matchedDriverId: String(driverUser._id),
+  trip,
+  driver: {
+    _id: driverUser._id,
+    name: driverUser.name,
+    profileImage: driverUser.profileImage || null,
+    ratingAvg: Number(driverUser.ratingAvg || 0),
+    ratingCount: Number(driverUser.ratingCount || 0),
+    tripsCount: Number(driverProfile?.tripsCount || 0),
+    phone: driverUser.phone || null,
+  },
+  vehicle: mapVehicleSummary(vehicle),
+  fare: {
+    currency: (trip?.pricing?.currency || "USD").toUpperCase(),
+    estimatedFare: Number(trip?.pricing?.estimatedFare || 0),
+    finalFare: Number(trip?.pricing?.finalFare || trip?.pricing?.estimatedFare || 0),
+  },
+  pickupProgress: buildDriverProgressPayload({
+    driverProfile,
+    targetPoint: trip?.pickup?.point,
+    targetLabel: "pickup",
+  }),
+  note: {
+    pickupInstruction: "Meet at the pickup location",
+    otpInstruction: "Share OTP with driver after arrival",
+    cancellationRule: "If cancelled late, up to 60% of the fare may be charged",
+  },
+});
 
 const buildAvailablePeriods = (trips = []) => {
   const years = new Map();
@@ -683,6 +792,24 @@ export const driverHomeService = {
 
     await emitDriverQueueSync(userId, profile, "location_update");
 
+    const activeTrip = await getActiveTripForDriver(userId);
+    if (activeTrip?.riderId) {
+      const targetPoint =
+        activeTrip.status === "started" ? activeTrip.dropoff?.point : activeTrip.pickup?.point;
+      const targetLabel = activeTrip.status === "started" ? "dropoff" : "pickup";
+
+      emitToUser(activeTrip.riderId, "trip:driver-location", {
+        tripId: String(activeTrip._id),
+        driverId: String(userId),
+        status: activeTrip.status,
+        progress: buildDriverProgressPayload({
+          driverProfile: profile,
+          targetPoint,
+          targetLabel,
+        }),
+      });
+    }
+
     return {
       message: "Driver location updated",
       location: profile.location,
@@ -806,6 +933,21 @@ export const driverHomeService = {
 
       await session.commitTransaction();
 
+      const [driverUser, vehicle] = await Promise.all([
+        User.findById(userId)
+          .select("name profileImage ratingAvg ratingCount phone")
+          .lean(),
+        profile.activeVehicleId ? Vehicle.findById(profile.activeVehicleId).lean() : null,
+      ]);
+
+      const matchedPayload = buildRealtimeMatchedPayload({
+        trip,
+        rideRequest,
+        driverUser,
+        driverProfile: profile,
+        vehicle,
+      });
+
       const nearbyDriverProfiles =
         rideRequest.pickup?.point?.coordinates?.length === 2
           ? await findNearbyAvailableDrivers({
@@ -815,9 +957,7 @@ export const driverHomeService = {
           : [];
 
       emitToUser(rideRequest.riderId, "ride-request:matched", {
-        requestId: String(rideRequest._id),
-        matchedDriverId: String(userId),
-        trip,
+        ...matchedPayload,
       });
 
       emitToUser(userId, "ride-request:accepted", {
