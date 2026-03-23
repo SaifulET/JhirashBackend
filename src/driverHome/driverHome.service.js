@@ -12,7 +12,10 @@ import { Rating } from "../models/Rating/Rating.model.js";
 import { DriverOnlineSession } from "../models/Driver_online_session/DriverOnlineSession.model.js";
 import { sendEmail } from "../core_feature/utils/mailerSender/mailer.js";
 import { stripe } from "../core_feature/utils/stripe/stripe.js";
-import { findNearbyAvailableDrivers } from "../core_feature/utils/rideMatching/rideMatching.helper.js";
+import {
+  DRIVER_DISPATCH_ELIGIBLE_STATUSES,
+  findNearbyAvailableDrivers,
+} from "../core_feature/utils/rideMatching/rideMatching.helper.js";
 import { emitToUser, emitToUsers } from "../messages/socketRealtime.helper.js";
 import {
   buildRideRequestQuery,
@@ -53,8 +56,8 @@ const getActiveTripForDriver = async (userId) => {
   }).sort({ createdAt: -1 });
 };
 
-// const isDriverDispatchEligible = (profile) => profile?.status === "active";
-const isDriverDispatchEligible = (profile) => profile?.status === "pending";
+const isDriverDispatchEligible = (profile) =>
+  DRIVER_DISPATCH_ELIGIBLE_STATUSES.includes(profile?.status);
 
 const emitDriverQueueSync = async (driverId, driverProfile, triggeredBy) => {
   if (
@@ -429,6 +432,19 @@ const closeActiveOnlineSession = async (driverId) => {
   return activeSession;
 };
 
+const syncIneligibleDriverOfflineState = async (driverId, profile) => {
+  if (!profile || isDriverDispatchEligible(profile) || (!profile.isOnline && !profile.isBusy)) {
+    return profile;
+  }
+
+  profile.isOnline = false;
+  profile.isBusy = false;
+  await profile.save();
+  await closeActiveOnlineSession(driverId);
+
+  return profile;
+};
+
 const syncUserRatingSummary = async (userId) => {
   const ratings = await Rating.find({ toUserId: userId }).lean();
   const ratingCount = ratings.length;
@@ -543,6 +559,7 @@ export const driverHomeService = {
   async getHome(userId) {
     const user = await getDriverUser(userId);
     const profile = await getDriverProfileOrFail(userId);
+    await syncIneligibleDriverOfflineState(userId, profile);
 
     const [activeTrip, activeRideRequest] = await Promise.all([
       getActiveTripForDriver(userId),
@@ -580,7 +597,8 @@ export const driverHomeService = {
     const hasIncomingLocation = payload?.lat !== undefined && payload?.lng !== undefined;
 
     if (!isDriverDispatchEligible(profile)) {
-      throw { status: 400, message: "Driver is not eligible to go online" };
+      await syncIneligibleDriverOfflineState(userId, profile);
+      throw { status: 400, message: "Only active drivers can go online" };
     }
 
     if (!profile.activeVehicleId) {

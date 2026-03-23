@@ -5,6 +5,7 @@ export const TEN_KILOMETERS_IN_METERS = 10000;
 export const TEN_KILOMETERS_IN_MILES = Number(
   (TEN_KILOMETERS_IN_METERS / 1609.344).toFixed(2)
 );
+export const DRIVER_DISPATCH_ELIGIBLE_STATUSES = ["active"];
 
 export const buildNearbyPointQuery = ({
   lng,
@@ -28,12 +29,13 @@ export const findNearbyAvailableDrivers = async ({
   lean = true,
 } = {}) => {
   let query = DriverProfile.find({
-    status: "active",
+    status: { $in: DRIVER_DISPATCH_ELIGIBLE_STATUSES },
     isOnline: true,
     isBusy: false,
     activeVehicleId: { $ne: null },
     "location.point": buildNearbyPointQuery({ lng, lat, maxDistance }),
   });
+ 
 
   if (populate) {
     query = query

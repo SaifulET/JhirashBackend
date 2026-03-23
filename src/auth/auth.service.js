@@ -169,7 +169,7 @@ export const authService = {
   {
    let email= data.email;
    let role=data.role;
-    if (!["rider", "driver"].includes(role)) throw { status: 400, code: "VALIDATION_ERROR", message: "Invalid role" };
+    if (!["rider", "driver","admin"].includes(role)) throw { status: 400, code: "VALIDATION_ERROR", message: "Invalid role" };
     
     const normalizedEmail = email?.toLowerCase();
 

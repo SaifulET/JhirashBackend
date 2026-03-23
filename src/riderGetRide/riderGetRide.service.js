@@ -496,6 +496,7 @@ export const riderGetRideService = {
     }
 
     const nearbyDrivers = await findNearbyDriversForPickup({ lng, lat });
+   
 
     return {
       drivers: nearbyDrivers,
