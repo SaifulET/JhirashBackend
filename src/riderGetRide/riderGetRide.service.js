@@ -23,6 +23,8 @@ import { emitToUser, emitToUsers } from "../messages/socketRealtime.helper.js";
 const ACTIVE_TRIP_STATUSES = ["accepted", "driver_arrived", "otp_verified", "started"];
 const ACTIVE_REQUEST_STATUSES = ["searching", "matched"];
 const RIDE_REQUEST_EXPIRY_MS = 5 * 60 * 1000;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MS_PER_YEAR = 365 * MS_PER_DAY;
 
 
 
@@ -45,9 +47,30 @@ const getYearsSince = (date) => {
   }
 
   const diffMs = Date.now() - new Date(date).getTime();
-  const years = Math.floor(diffMs / (365 * 24 * 60 * 60 * 1000));
+  const years = Math.floor(diffMs / MS_PER_YEAR);
 
-  return Math.max(1, years);
+  return Math.max(0, years);
+};
+
+const getDaysSince = (date) => {
+  if (!date) {
+    return 0;
+  }
+
+  const diffMs = Date.now() - new Date(date).getTime();
+  const days = Math.floor(diffMs / MS_PER_DAY);
+
+  return Math.max(0, days);
+};
+
+const buildPlatformDurationSummary = (profileCreatedAt, userCreatedAt) => {
+  const createdAt = profileCreatedAt || userCreatedAt || null;
+
+  return {
+    profileCreatedAt: createdAt,
+    daysOnPlatform: getDaysSince(createdAt),
+    yearsOnPlatform: getYearsSince(createdAt),
+  };
 };
 
 const mapReviewSummary = (review) => {
@@ -1162,19 +1185,26 @@ export const riderGetRideService = {
       throw { status: 404, message: "Trip not found" };
     }
 
-    const [driver, vehicle, reviews] = await Promise.all([
+    const [driver, driverProfile, vehicle, reviews, completedTripsCount] = await Promise.all([
       User.findById(trip.driverId).lean(),
+      DriverProfile.findOne({ userId: trip.driverId }).lean(),
       trip.vehicleId ? Vehicle.findById(trip.vehicleId).lean() : null,
       Rating.find({ toUserId: trip.driverId })
         .sort({ createdAt: -1 })
         .limit(10)
         .populate("fromUserId", "name profileImage role")
         .lean(),
+      Trip.countDocuments({ driverId: trip.driverId, status: "completed" }),
     ]);
 
     if (!driver) {
       throw { status: 404, message: "Driver not found" };
     }
+
+    const platformDuration = buildPlatformDurationSummary(
+      driverProfile?.createdAt,
+      driver.createdAt
+    );
 
     return {
       driver: {
@@ -1183,6 +1213,11 @@ export const riderGetRideService = {
         profileImage: driver.profileImage,
         ratingAvg: driver.ratingAvg,
         ratingCount: driver.ratingCount,
+        tripsCount: Math.max(
+          Number(driverProfile?.tripsCount || 0),
+          Number(completedTripsCount || 0)
+        ),
+        ...platformDuration,
       },
       vehicle: vehicle
         ? {

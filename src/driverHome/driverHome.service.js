@@ -27,6 +27,8 @@ import {
 } from "./driverRideRequestQueue.helper.js";
 import bcrypt from "bcryptjs";
 const ACTIVE_TRIP_STATUSES = ["accepted", "driver_arrived", "otp_verified", "started"];
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MS_PER_YEAR = 365 * MS_PER_DAY;
 
 const getDriverUser = async (userId) => {
   const user = await User.findById(userId).lean();
@@ -48,6 +50,38 @@ const getDriverProfileOrFail = async (userId) => {
     throw { status: 404, message: "Driver profile not found" };
   }
   return profile;
+};
+
+const getYearsSince = (date) => {
+  if (!date) {
+    return 0;
+  }
+
+  const diffMs = Date.now() - new Date(date).getTime();
+  const years = Math.floor(diffMs / MS_PER_YEAR);
+
+  return Math.max(0, years);
+};
+
+const getDaysSince = (date) => {
+  if (!date) {
+    return 0;
+  }
+
+  const diffMs = Date.now() - new Date(date).getTime();
+  const days = Math.floor(diffMs / MS_PER_DAY);
+
+  return Math.max(0, days);
+};
+
+const buildPlatformDurationSummary = (profileCreatedAt, userCreatedAt) => {
+  const createdAt = profileCreatedAt || userCreatedAt || null;
+
+  return {
+    profileCreatedAt: createdAt,
+    daysOnPlatform: getDaysSince(createdAt),
+    yearsOnPlatform: getYearsSince(createdAt),
+  };
 };
 
 const getActiveTripForDriver = async (userId) => {
@@ -1349,18 +1383,25 @@ async arrivedAtPickup(userId, tripId) {
       throw { status: 404, message: "Trip not found" };
     }
 
-    const [rider, reviews] = await Promise.all([
+    const [rider, riderProfile, reviews, completedTripsCount] = await Promise.all([
       User.findById(trip.riderId).lean(),
+      RiderProfile.findOne({ userId: trip.riderId }).lean(),
       Rating.find({ toUserId: trip.riderId })
         .sort({ createdAt: -1 })
         .limit(10)
         .populate("fromUserId", "name profileImage role")
         .lean(),
+      Trip.countDocuments({ riderId: trip.riderId, status: "completed" }),
     ]);
 
     if (!rider) {
       throw { status: 404, message: "Rider not found" };
     }
+
+    const platformDuration = buildPlatformDurationSummary(
+      riderProfile?.createdAt,
+      rider.createdAt
+    );
 
     return {
       rider: {
@@ -1369,6 +1410,8 @@ async arrivedAtPickup(userId, tripId) {
         profileImage: rider.profileImage,
         ratingAvg: rider.ratingAvg,
         ratingCount: rider.ratingCount,
+        tripsCount: Number(completedTripsCount || 0),
+        ...platformDuration,
       },
       reviews,
     };
