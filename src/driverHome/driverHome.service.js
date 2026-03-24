@@ -10,7 +10,6 @@ import { Trip } from "../models/Trip/Trip.model.js";
 import { Payment } from "../models/Payment/Payment.model.js";
 import { Rating } from "../models/Rating/Rating.model.js";
 import { DriverOnlineSession } from "../models/Driver_online_session/DriverOnlineSession.model.js";
-import { sendEmail } from "../core_feature/utils/mailerSender/mailer.js";
 import { stripe } from "../core_feature/utils/stripe/stripe.js";
 import {
   DRIVER_DISPATCH_ELIGIBLE_STATUSES,
@@ -478,6 +477,10 @@ const buildRealtimeMatchedPayload = ({
     estimatedFare: Number(trip?.pricing?.estimatedFare || 0),
     finalFare: Number(trip?.pricing?.finalFare || trip?.pricing?.estimatedFare || 0),
   },
+  otp: {
+    code: trip?.otp?.hash || null,
+    expiresAt: trip?.otp?.expiresAt || null,
+  },
   pickupProgress: buildDriverProgressPayload({
     driverProfile,
     targetPoint: trip?.pickup?.point,
@@ -485,7 +488,7 @@ const buildRealtimeMatchedPayload = ({
   }),
   note: {
     pickupInstruction: "Meet at the pickup location",
-    otpInstruction: "Share OTP with driver after arrival",
+    otpInstruction: "Share OTP with driver to start the trip",
     cancellationRule: "If cancelled late, up to 60% of the fare may be charged",
   },
 });
@@ -886,6 +889,8 @@ export const driverHomeService = {
   async acceptRideRequest(userId, requestId) {
     await getDriverUser(userId);
     const profile = await getDriverProfileOrFail(userId);
+    const now = new Date();
+    const plainOtp = generateOtp();
 
     if (!profile.isOnline) {
       throw { status: 400, message: "Driver must be online to accept a request" };
@@ -935,10 +940,15 @@ export const driverHomeService = {
             pickup: rideRequest.pickup,
             dropoff: rideRequest.dropoff,
             status: "accepted",
+            otp: {
+              hash: plainOtp,
+              expiresAt: new Date(now.getTime() + 10 * 60 * 1000),
+              verifiedAt: null,
+            },
             statusHistory: [
               {
                 status: "accepted",
-                at: new Date(),
+                at: now,
                 by: "driver",
               },
             ],
@@ -1231,7 +1241,6 @@ async arrivedAtPickup(userId, tripId) {
   await getDriverUser(userId);
 
   const now = new Date();
-  const plainOtp = generateOtp();
 
   const trip = await Trip.findOneAndUpdate(
     {
@@ -1242,11 +1251,6 @@ async arrivedAtPickup(userId, tripId) {
     {
       $set: {
         status: "driver_arrived",
-        otp: {
-          hash: plainOtp,
-          expiresAt: new Date(now.getTime() + 10 * 60 * 1000),
-          verifiedAt: null,
-        },
       },
       $push: {
         statusHistory: {
@@ -1263,43 +1267,8 @@ async arrivedAtPickup(userId, tripId) {
     throw { status: 404, message: "Accepted trip not found" };
   }
 
-  const rider = await User.findOne({
-    _id: trip.riderId,
-    role: "rider",
-    isDeleted: { $ne: true },
-  })
-    .select("email")
-    .lean();
-
-  if (!rider) {
-    throw { status: 404, message: "Rider not found" };
-  }
-
-  if (!rider.email) {
-    throw { status: 400, message: "Rider email not found" };
-  }
-
-  sendEmail({
-    to: rider.email,
-    subject: "Trip Otp",
-    text: `Hello,\n\nYour trip otp code is: ${plainOtp}\n\ngive the code to the driver to start the trip. The code expires in 10 minutes.`,
-    html: `
-<div style="font-family: Arial, sans-serif; line-height:1.6;">
-  <h2>Ride Verification Code</h2>
-  <p>Hello,</p>
-  <p>Your driver has arrived at the pickup location. Please share the following OTP with the driver to start your trip:</p>
-  <div style="background:#f0f0f0; padding:15px; margin:20px 0; font-size:30px; font-weight:bold; text-align:center; letter-spacing:4px;">
-    ${plainOtp}
-  </div>
-  <p>This code will expire in <strong>10 minutes</strong>.</p>
-</div>
-`,
-  }).catch((err) => {
-    console.error("Failed to send trip OTP email:", err);
-  });
-
   return {
-    message: "Driver arrived at pickup and OTP sent to rider email",
+    message: "Driver arrived at pickup successfully",
     trip,
   };
 },
