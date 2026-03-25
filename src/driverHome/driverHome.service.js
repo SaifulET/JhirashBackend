@@ -1386,18 +1386,25 @@ async arrivedAtPickup(userId, tripId) {
       throw { status: 400, message: "Invalid OTP" };
     }
 
-    trip.status = "otp_verified";
-    trip.otp.verifiedAt = new Date();
+    const now = new Date();
+
+    trip.otp.verifiedAt = now;
     trip.statusHistory.push({
       status: "otp_verified",
-      at: new Date(),
+      at: now,
+      by: "driver",
+    });
+    trip.status = "started";
+    trip.statusHistory.push({
+      status: "started",
+      at: now,
       by: "driver",
     });
 
     await trip.save();
 
     return {
-      message: "OTP verified successfully",
+      message: "OTP verified and trip started successfully",
       trip,
     };
   },
@@ -1408,11 +1415,18 @@ async arrivedAtPickup(userId, tripId) {
     const trip = await Trip.findOne({
       _id: tripId,
       driverId: userId,
-      status: { $in: ["driver_arrived", "otp_verified"] },
+      status: { $in: ["driver_arrived", "otp_verified", "started"] },
     });
 
     if (!trip) {
       throw { status: 404, message: "Trip not found or cannot be started" };
+    }
+
+    if (trip.status === "started") {
+      return {
+        message: "Trip already started",
+        trip,
+      };
     }
 
     trip.status = "started";
