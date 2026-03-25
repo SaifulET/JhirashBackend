@@ -1104,9 +1104,9 @@ export const riderGetRideService = {
       tier,
       size,
       estimatedMiles:
-        payload?.estimatedMiles ?? trip.distanceMiles ?? trip.pricing?.estimatedMiles ?? 0,
+        payload?.estimatedMiles ?? trip.pricing?.estimatedMiles ?? trip.distanceMiles ?? 0,
       estimatedMinutes:
-        payload?.estimatedMinutes ?? trip.durationMinutes ?? trip.pricing?.estimatedMinutes ?? 0,
+        payload?.estimatedMinutes ?? trip.pricing?.estimatedMinutes ?? trip.durationMinutes ?? 0,
     });
 
     if (payload?.pickup) {
@@ -1118,6 +1118,8 @@ export const riderGetRideService = {
     }
 
     trip.pricing.currency = newFare.currency;
+    trip.pricing.estimatedMiles = Number(newFare.estimatedMiles || 0);
+    trip.pricing.estimatedMinutes = Number(newFare.estimatedMinutes || 0);
     trip.pricing.estimatedFare = newFare.estimatedFare;
     trip.pricing.baseFare = newFare.baseFare;
     trip.pricing.pricePerMile = newFare.pricePerMile;

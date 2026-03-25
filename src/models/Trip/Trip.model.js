@@ -46,6 +46,8 @@ const TripSchema = new Schema(
     // pricing snapshot (important: config changes should not affect old trips)
     pricing: {
       currency: { type: String, default: "USD" },
+      estimatedMiles: { type: Number, default: 0 },
+      estimatedMinutes: { type: Number, default: 0 },
       baseFare: { type: Number, default: 0 },
       pricePerMile: { type: Number, default: 0 },
       pricePerMinute: { type: Number, default: 0 },

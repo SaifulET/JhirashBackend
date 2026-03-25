@@ -309,6 +309,36 @@ const MINUTE_IN_MS = 60 * 1000;
 const EARTH_RADIUS_METERS = 6371000;
 const APPROX_CITY_SPEED_METERS_PER_MINUTE = 300;
 
+const getTripStartedAt = (trip) => {
+  if (trip?.otp?.verifiedAt) {
+    return new Date(trip.otp.verifiedAt);
+  }
+
+  const statusHistory = Array.isArray(trip?.statusHistory) ? trip.statusHistory : [];
+
+  for (let index = statusHistory.length - 1; index >= 0; index -= 1) {
+    const entry = statusHistory[index];
+    if (entry?.status === "started" && entry?.at) {
+      return new Date(entry.at);
+    }
+  }
+
+  return null;
+};
+
+const calculateElapsedDurationMinutes = (startedAt, completedAt = new Date()) => {
+  if (!(startedAt instanceof Date) || Number.isNaN(startedAt.getTime())) {
+    return 0;
+  }
+
+  const endTime =
+    completedAt instanceof Date && !Number.isNaN(completedAt.getTime())
+      ? completedAt.getTime()
+      : Date.now();
+
+  return Math.max(0, Number(((endTime - startedAt.getTime()) / MINUTE_IN_MS).toFixed(2)));
+};
+
 const toPositiveNumber = (value, fallback = 0) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
@@ -984,6 +1014,8 @@ export const driverHomeService = {
             ],
             pricing: {
               currency: rideRequest.quote.currency,
+              estimatedMiles: Number(rideRequest.quote.estimatedMiles || 0),
+              estimatedMinutes: Number(rideRequest.quote.estimatedMinutes || 0),
               baseFare: rideRequest.quote.baseFare,
               pricePerMile: rideRequest.quote.pricePerMile,
               pricePerMinute: rideRequest.quote.pricePerMinute,
@@ -1558,7 +1590,7 @@ async arrivedAtPickup(userId, tripId) {
     };
   },
 
-  async completeTrip(userId, tripId, payload) {
+  async completeTrip(userId, tripId, payload = {}) {
     await getDriverUser(userId);
     const profile = await getDriverProfileOrFail(userId);
 
@@ -1572,13 +1604,14 @@ async arrivedAtPickup(userId, tripId) {
       throw { status: 404, message: "Started trip not found" };
     }
 
-    if (payload.distanceMiles !== undefined) {
-      trip.distanceMiles = Number(payload.distanceMiles);
-    }
+    const completedAt = new Date();
+    const startedAt = getTripStartedAt(trip);
 
-    if (payload.durationMinutes !== undefined) {
-      trip.durationMinutes = Number(payload.durationMinutes);
-    }
+    trip.durationMinutes = calculateElapsedDurationMinutes(startedAt, completedAt);
+    trip.distanceMiles = toPositiveNumber(
+      trip?.pricing?.estimatedMiles,
+      payload.distanceMiles !== undefined ? Number(payload.distanceMiles) : trip.distanceMiles
+    );
 
     trip.pricing.finalFare = calculateFareFromMetrics({
       distanceMiles: trip.distanceMiles,
@@ -1594,7 +1627,7 @@ async arrivedAtPickup(userId, tripId) {
     trip.paymentStatus = paymentIsRequired ? "unpaid" : "paid";
     trip.statusHistory.push({
       status: "completed",
-      at: new Date(),
+      at: completedAt,
       by: "driver",
     });
 
@@ -1602,7 +1635,7 @@ async arrivedAtPickup(userId, tripId) {
 
     await syncPaymentRecord(trip, {
       status: paymentIsRequired ? "pending" : "succeeded",
-      paidAt: paymentIsRequired ? null : new Date(),
+      paidAt: paymentIsRequired ? null : completedAt,
       failureMessage: null,
     });
 
@@ -1630,7 +1663,7 @@ async arrivedAtPickup(userId, tripId) {
           stripePaymentIntentId: autoCharge.paymentIntentId,
           stripePaymentMethodId: autoCharge.paymentMethodId,
           status: "succeeded",
-          paidAt: new Date(),
+          paidAt: completedAt,
           failureMessage: null,
         });
 
