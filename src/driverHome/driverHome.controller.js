@@ -144,6 +144,19 @@ export const driverHomeController = {
     }
   },
 
+  async getTodayEarnings(req, res) {
+    try {
+      const result = await driverHomeService.getTodayEarnings(req.auth.userId);
+      return res.status(200).json({
+        success: true,
+        message: "Driver today earnings fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
   async arrivedAtPickup(req, res) {
     try {
       const result = await driverHomeService.arrivedAtPickup(

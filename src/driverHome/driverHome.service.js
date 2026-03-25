@@ -382,6 +382,36 @@ const formatDuration = (minutes) => {
   };
 };
 
+const getCurrentUtcDayBounds = (referenceDate = new Date()) => {
+  const currentDate = new Date(referenceDate);
+
+  return {
+    start: new Date(
+      Date.UTC(
+        currentDate.getUTCFullYear(),
+        currentDate.getUTCMonth(),
+        currentDate.getUTCDate(),
+        0,
+        0,
+        0,
+        0
+      )
+    ),
+    end: new Date(
+      Date.UTC(
+        currentDate.getUTCFullYear(),
+        currentDate.getUTCMonth(),
+        currentDate.getUTCDate() + 1,
+        0,
+        0,
+        0,
+        0
+      )
+    ),
+    label: currentDate.toISOString().slice(0, 10),
+  };
+};
+
 const toRadians = (degrees) => (Number(degrees) * Math.PI) / 180;
 
 const calculateDistanceMeters = (fromCoordinates = [], toCoordinates = []) => {
@@ -1078,6 +1108,66 @@ export const driverHomeService = {
       trips: trips.map((trip) =>
         mapTripHistoryItem(trip, reviewsByTripId.get(String(trip._id)) || null)
       ),
+    };
+  },
+
+  async getTodayEarnings(userId) {
+    await getDriverUser(userId);
+    await getDriverProfileOrFail(userId);
+
+    const { start, end, label } = getCurrentUtcDayBounds();
+
+    const [completedTrips, onlineSessions] = await Promise.all([
+      Trip.find({
+        driverId: userId,
+        status: "completed",
+        createdAt: { $gte: start, $lt: end },
+      })
+        .select("createdAt pricing distanceMiles durationMinutes paymentStatus")
+        .sort({ createdAt: -1 })
+        .lean(),
+      DriverOnlineSession.find({
+        driverId: userId,
+        startedAt: { $lt: end },
+        $or: [{ endedAt: null }, { endedAt: { $gt: start } }],
+      })
+        .select("startedAt endedAt durationMinutes")
+        .lean(),
+    ]);
+
+    const earnings = completedTrips.reduce((sum, trip) => sum + computeDriverGets(trip), 0);
+    const totalDistanceMiles = completedTrips.reduce(
+      (sum, trip) => sum + toPositiveNumber(trip.distanceMiles),
+      0
+    );
+    const totalDurationMinutes = completedTrips.reduce(
+      (sum, trip) => sum + toPositiveNumber(trip.durationMinutes),
+      0
+    );
+    const paidTrips = completedTrips.filter((trip) => trip.paymentStatus === "paid").length;
+    const unpaidTrips = completedTrips.filter((trip) => trip.paymentStatus !== "paid").length;
+    const onlineMinutes = onlineSessions.reduce(
+      (sum, session) => sum + calculateSessionOverlapMinutes(session, start, end),
+      0
+    );
+
+    return {
+      filter: {
+        period: "day",
+        label,
+        startAt: start,
+        endAt: end,
+      },
+      currency: "USD",
+      summary: {
+        earnings: Number(earnings.toFixed(2)),
+        trips: completedTrips.length,
+        paidTrips,
+        unpaidTrips,
+        totalDistanceMiles: Number(totalDistanceMiles.toFixed(2)),
+        tripDuration: formatDuration(totalDurationMinutes),
+        onlineTime: formatDuration(onlineMinutes),
+      },
     };
   },
 

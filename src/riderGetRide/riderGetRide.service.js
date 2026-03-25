@@ -1132,7 +1132,7 @@ export const riderGetRideService = {
     if (trip.requestId) {
       const requestUpdate = {
         quote: {
-          ...newQuote,
+          ...newFare,
         },
       };
 
