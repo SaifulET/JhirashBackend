@@ -451,6 +451,16 @@ const buildTripPaymentAmounts = (trip) => {
   };
 };
 
+const buildQuoteSummary = (quote = {}) => ({
+  currency: (quote?.currency || "USD").toUpperCase(),
+  estimatedMiles: Number(quote?.estimatedMiles || 0),
+  estimatedMinutes: Number(quote?.estimatedMinutes || 0),
+  baseFare: Number(quote?.baseFare || 0),
+  pricePerMile: Number(quote?.pricePerMile || 0),
+  pricePerMinute: Number(quote?.pricePerMinute || 0),
+  estimatedFare: Number(quote?.estimatedFare || 0),
+});
+
 const upsertTripPaymentRecord = async (trip, overrides = {}, options = {}) => {
   const { totalFare, driverGets, platformGets, currency } = buildTripPaymentAmounts(trip);
 
@@ -1071,6 +1081,44 @@ export const riderGetRideService = {
     };
   },
 
+  async checkRideRequestFare(userId, requestId, payload = {}) {
+    await getRiderUser(userId);
+
+    const rideRequest = await RideRequest.findOne({
+      _id: requestId,
+      riderId: userId,
+      status: { $in: ACTIVE_REQUEST_STATUSES },
+    }).lean();
+
+    if (!rideRequest) {
+      throw { status: 404, message: "Active ride request not found" };
+    }
+
+    const config = await getActiveFareConfig();
+    const preference = rideRequest.preference || {};
+    const checkedQuote = calculateEstimate({
+      config,
+      vehicleType: preference.vehicleType || "car",
+      tier: preference.tier || "regular",
+      size: preference.size || "normal",
+      estimatedMiles: payload?.estimatedMiles ?? rideRequest.quote?.estimatedMiles ?? 0,
+      estimatedMinutes: payload?.estimatedMinutes ?? rideRequest.quote?.estimatedMinutes ?? 0,
+    });
+
+    return {
+      requestId: rideRequest._id,
+      currentQuote: buildQuoteSummary(rideRequest.quote),
+      checkedQuote: buildQuoteSummary(checkedQuote),
+      pickup: payload?.pickup
+        ? buildRideLocationPayload(payload.pickup, "pickup")
+        : rideRequest.pickup,
+      dropoff: payload?.dropoff
+        ? buildRideLocationPayload(payload.dropoff, "dropoff")
+        : rideRequest.dropoff,
+      preference: rideRequest.preference || null,
+    };
+  },
+
   async changeDestination(userId, tripId, payload) {
     await getRiderUser(userId);
 
@@ -1172,6 +1220,42 @@ export const riderGetRideService = {
       message: "Trip locations changed successfully",
       trip,
       newFare,
+    };
+  },
+
+  async checkFareAfterDestinationChange(userId, tripId, payload = {}) {
+    await getRiderUser(userId);
+
+    const trip = await Trip.findOne({
+      _id: tripId,
+      riderId: userId,
+      status: { $in: ACTIVE_TRIP_STATUSES },
+    }).lean();
+
+    if (!trip) {
+      throw { status: 404, message: "Active trip not found" };
+    }
+
+    const config = await getActiveFareConfig();
+    const checkedFare = calculateEstimate({
+      config,
+      vehicleType: trip.rideOption?.vehicleType || "car",
+      tier: trip.rideOption?.tier || "regular",
+      size: trip.rideOption?.size || "normal",
+      estimatedMiles: payload?.estimatedMiles ?? trip.pricing?.estimatedMiles ?? trip.distanceMiles ?? 0,
+      estimatedMinutes:
+        payload?.estimatedMinutes ?? trip.pricing?.estimatedMinutes ?? trip.durationMinutes ?? 0,
+    });
+
+    return {
+      tripId: trip._id,
+      currentFare: buildTripFareSummary(trip),
+      checkedFare: buildQuoteSummary(checkedFare),
+      pickup: payload?.pickup ? buildRideLocationPayload(payload.pickup, "pickup") : trip.pickup,
+      dropoff: payload?.dropoff
+        ? buildRideLocationPayload(payload.dropoff, "dropoff")
+        : trip.dropoff,
+      rideOption: trip.rideOption || null,
     };
   },
 

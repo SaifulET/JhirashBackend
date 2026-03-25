@@ -28,6 +28,11 @@ riderGetRideRouter.patch(
   requireAuth,
   riderGetRideController.changeRideRequestDestination
 );
+riderGetRideRouter.post(
+  "/ride-request/:requestId/check-fare",
+  requireAuth,
+  riderGetRideController.checkRideRequestFare
+);
 riderGetRideRouter.patch("/ride-request/:requestId/cancel", riderGetRideController.cancelRideRequest);
 
 // trip

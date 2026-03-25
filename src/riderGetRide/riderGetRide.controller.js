@@ -190,6 +190,23 @@ export const riderGetRideController = {
     }
   },
 
+  async checkRideRequestFare(req, res) {
+    try {
+      const result = await riderGetRideService.checkRideRequestFare(
+        req.auth.userId,
+        req.params.requestId,
+        req.body
+      );
+      return res.status(200).json({
+        success: true,
+        message: "Ride request fare checked successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
   async changeDestination(req, res) {
     try {
       const result = await riderGetRideService.changeDestination(
