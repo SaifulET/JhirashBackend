@@ -32,7 +32,10 @@ riderGetRideRouter.patch("/ride-request/:requestId/cancel", riderGetRideControll
 
 // trip
 riderGetRideRouter.patch("/trip/:tripId/cancel",requireAuth, riderGetRideController.cancelTrip);
-// riderGetRideRouter.post("/trip/:tripId/check-fare",requireAuth, riderGetRideController.checkFareAfterDestinationChange);
+
+
+riderGetRideRouter.post("/trip/:tripId/check-fare",requireAuth, riderGetRideController.checkFareAfterDestinationChange);
+
 riderGetRideRouter.patch("/trip/:tripId/change-destination",requireAuth, riderGetRideController.changeDestination);
 
 riderGetRideRouter.get("/trip/:tripId/driver-profile",requireAuth, riderGetRideController.getDriverProfile);
