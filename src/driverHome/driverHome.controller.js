@@ -238,6 +238,19 @@ export const driverHomeController = {
     }
   },
 
+  async getMyReviews(req, res) {
+    try {
+      const result = await driverHomeService.getMyReviews(req.auth.userId);
+      return res.status(200).json({
+        success: true,
+        message: "Driver reviews fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
   async submitRiderRating(req, res) {
     try {
       const result = await driverHomeService.submitRiderRating(

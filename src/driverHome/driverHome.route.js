@@ -33,6 +33,7 @@ driverHomeRouter.patch("/trip/:tripId/verify-otp", driverHomeController.verifyOt
 driverHomeRouter.patch("/trip/:tripId/start", driverHomeController.startTrip);
 
 driverHomeRouter.get("/trip/:tripId/rider-profile", driverHomeController.getRiderProfile);
+driverHomeRouter.get("/my-reviews", driverHomeController.getMyReviews);
 driverHomeRouter.get("/riders/:riderId/reviews", driverHomeController.getRiderReviews);
 // driverHomeRouter.post("/trip/:tripId/rating", driverHomeController.submitRiderRating);
 driverHomeRouter.post("/trip/:tripId/rider-review", driverHomeController.submitRiderRating);

@@ -44,6 +44,7 @@ riderGetRideRouter.post("/trip/:tripId/check-fare",requireAuth, riderGetRideCont
 riderGetRideRouter.patch("/trip/:tripId/change-destination",requireAuth, riderGetRideController.changeDestination);
 
 riderGetRideRouter.get("/trip/:tripId/driver-profile",requireAuth, riderGetRideController.getDriverProfile);
+riderGetRideRouter.get("/my-reviews", riderGetRideController.getMyReviews);
 riderGetRideRouter.get("/drivers/:driverId/reviews", riderGetRideController.getDriverReviews);
 
 riderGetRideRouter.get("/trip/:tripId/details",requireAuth, riderGetRideController.getTripDetails);

@@ -1559,6 +1559,41 @@ async arrivedAtPickup(userId, tripId) {
     };
   },
 
+  async getMyReviews(userId) {
+    const driver = await getDriverUser(userId);
+    const driverProfile = await getDriverProfileOrFail(userId);
+    const vehicle = driverProfile.activeVehicleId
+      ? await Vehicle.findById(driverProfile.activeVehicleId).lean()
+      : await Vehicle.findOne({ driverId: userId, isActive: true }).lean();
+    const reviews = await Rating.find({ toUserId: userId })
+      .sort({ createdAt: -1 })
+      .populate("fromUserId", "name profileImage role")
+      .lean();
+
+    return {
+      driver: {
+        _id: driver._id,
+        name: driver.name,
+        profileImage: driver.profileImage || null,
+        ratingAvg: driver.ratingAvg || 0,
+        ratingCount: driver.ratingCount || 0,
+        tripsCount: driverProfile?.tripsCount || 0,
+        yearsOnPlatform: getYearsSince(driverProfile?.createdAt || driver.createdAt),
+      },
+      vehicle: vehicle
+        ? {
+            _id: vehicle._id,
+            brand: vehicle.brand,
+            model: vehicle.model,
+            type: vehicle.type,
+            size: vehicle.size,
+            licensePlate: vehicle.licensePlate || null,
+          }
+        : null,
+      reviews: mapReviewList(reviews),
+    };
+  },
+
   async submitRiderRating(userId, tripId, payload = {}) {
     await getDriverUser(userId);
 

@@ -1390,6 +1390,41 @@ export const riderGetRideService = {
     };
   },
 
+  async getMyReviews(userId) {
+    const rider = await getRiderUser(userId);
+    const riderProfile = await RiderProfile.findOne({ userId }).lean();
+
+    const reviews = await Rating.find({ toUserId: userId })
+      .sort({ createdAt: -1 })
+      .populate("fromUserId", "name profileImage role")
+      .lean();
+
+    return {
+      rider: {
+        _id: rider._id,
+        name: rider.name,
+        profileImage: rider.profileImage || null,
+        ratingAvg: rider.ratingAvg || 0,
+        ratingCount: rider.ratingCount || 0,
+        savedPlacesCount: riderProfile?.savedPlaces?.length || 0,
+      },
+      reviews: reviews.map((review) => ({
+        _id: review._id,
+        stars: review.stars,
+        comment: review.comment || "",
+        createdAt: review.createdAt,
+        reviewer: review.fromUserId
+          ? {
+              _id: review.fromUserId._id,
+              name: review.fromUserId.name,
+              profileImage: review.fromUserId.profileImage || null,
+              role: review.fromUserId.role || null,
+            }
+          : null,
+      })),
+    };
+  },
+
   async getTripDetails(userId, tripId) {
     await getRiderUser(userId);
 
