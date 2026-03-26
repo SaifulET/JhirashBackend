@@ -116,6 +116,14 @@ const emitDriverQueueSync = async (driverId, driverProfile, triggeredBy) => {
   });
 };
 
+const buildTripCancelledPayload = (trip) => ({
+  tripId: String(trip._id),
+  status: trip.status,
+  cancelledBy: trip?.cancellation?.canceledBy || null,
+  cancellation: trip.cancellation || null,
+  trip,
+});
+
 const compareOtp = (plainOtp, trip) => {
   if (!trip?.otp?.hash) return false;
   return String(trip.otp.hash) === String(plainOtp);
@@ -1748,6 +1756,9 @@ async arrivedAtPickup(userId, tripId) {
 
     profile.isBusy = false;
     await profile.save();
+
+    emitToUsers([userId, trip.riderId], "trip:cancelled", buildTripCancelledPayload(trip));
+    await emitDriverQueueSync(userId, profile, "trip_cancelled");
 
     return {
       message: "Trip cancelled successfully",

@@ -116,6 +116,14 @@ const mapVehicleSummary = (vehicle) => {
   };
 };
 
+const buildTripCancelledPayload = (trip) => ({
+  tripId: String(trip._id),
+  status: trip.status,
+  cancelledBy: trip?.cancellation?.canceledBy || null,
+  cancellation: trip.cancellation || null,
+  trip,
+});
+
 const buildTripFareSummary = (trip) => ({
   currency: (trip?.pricing?.currency || "USD").toUpperCase(),
   estimatedFare: Number(trip?.pricing?.estimatedFare || 0),
@@ -953,6 +961,16 @@ export const riderGetRideService = {
     });
 
     await trip.save();
+
+    const driverProfile = await DriverProfile.findOne({ userId: trip.driverId });
+
+    if (driverProfile) {
+      driverProfile.isBusy = false;
+      await driverProfile.save();
+    }
+
+    emitToUsers([userId, trip.driverId], "trip:cancelled", buildTripCancelledPayload(trip));
+    await emitDriverQueuePayloadToUsers([trip.driverId], "trip_cancelled");
 
     return {
       message: "Trip cancelled successfully",
