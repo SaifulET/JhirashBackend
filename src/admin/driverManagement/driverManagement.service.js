@@ -228,7 +228,6 @@ const refreshDriverReviewSummary = async (driverId) => {
       $set: {
         documentsStatus,
         requiredActionsCount: missingCount + rejectedCount + pendingCount + vehiclePending,
-        status: documentsStatus === "verified" ? "active" : "pending",
       },
     },
     {

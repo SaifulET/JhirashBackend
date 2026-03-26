@@ -502,9 +502,6 @@ async  getStatus(userId) {
 
     if (eligible && pendingDocuments.length === 0) {
       driverProfile.documentsStatus = "verified";
-      if (driverProfile.status === "pending") {
-        driverProfile.status = "active";
-      }
     } else {
       driverProfile.documentsStatus =
         rejectedDocuments.length > 0 ? "denied" : "in_review";
