@@ -21,6 +21,22 @@ export const riderManagementController = {
     }
   },
 
+  async listAllRiderPayments(req, res) {
+    try {
+      const result = await riderManagementService.listAllRiderPayments(
+        req.auth.userId,
+        req.query
+      );
+      return res.status(200).json({
+        success: true,
+        message: "All rider payments fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
   async getRiderDetail(req, res) {
     try {
       const result = await riderManagementService.getRiderDetail(
@@ -30,6 +46,23 @@ export const riderManagementController = {
       return res.status(200).json({
         success: true,
         message: "Rider detail fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
+  async getRiderPayments(req, res) {
+    try {
+      const result = await riderManagementService.getRiderPayments(
+        req.auth.userId,
+        req.params.riderId,
+        req.query
+      );
+      return res.status(200).json({
+        success: true,
+        message: "Rider payments fetched successfully",
         data: result,
       });
     } catch (error) {

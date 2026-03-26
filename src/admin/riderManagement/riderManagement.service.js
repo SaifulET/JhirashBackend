@@ -2,6 +2,7 @@ import { User } from "../../models/User/User.model.js";
 import { RiderProfile } from "../../models/Rider_profile/Rider_profile.model.js";
 import { Vehicle } from "../../models/Vehicle/Vehicle.model.js";
 import { Trip } from "../../models/Trip/Trip.model.js";
+import { Payment } from "../../models/Payment/Payment.model.js";
 import { Rating } from "../../models/Rating/Rating.model.js";
 import { Report } from "../../models/Reports/Reports.model.js";
 
@@ -75,12 +76,25 @@ const mapRiderListItem = ({ index, user, reportCount }) => ({
   createdAt: user.createdAt,
 });
 
+const toCurrencyNumber = (value) => Number(Number(value || 0).toFixed(2));
+
 const mapTripFare = (trip) => ({
   currency: (trip?.pricing?.currency || "USD").toUpperCase(),
   estimatedFare: Number(trip?.pricing?.estimatedFare || 0),
   finalFare: Number(trip?.pricing?.finalFare || 0),
   total: Number(trip?.pricing?.finalFare || trip?.pricing?.estimatedFare || 0),
 });
+
+const computeDriverGets = (trip) => {
+  const totalFare = Number(trip?.pricing?.finalFare || trip?.pricing?.estimatedFare || 0);
+  const sharePercent = Number(trip?.pricing?.driverSharePercent || 0);
+  return toCurrencyNumber((totalFare * sharePercent) / 100);
+};
+
+const computePlatformGets = (trip) => {
+  const totalFare = Number(trip?.pricing?.finalFare || trip?.pricing?.estimatedFare || 0);
+  return toCurrencyNumber(totalFare - computeDriverGets(trip));
+};
 
 const mapVehicleSummary = (vehicle) =>
   vehicle
@@ -144,6 +158,70 @@ const mapRiderTripDetail = ({ trip, driver, vehicle, driverReview, riderReview }
   vehicle: mapVehicleSummary(vehicle),
   driverReview: mapReviewSummary(driverReview),
   riderReview: mapReviewSummary(riderReview),
+});
+
+const mapPaymentSummary = (payment, trip = null) => {
+  if (!payment && !trip) {
+    return null;
+  }
+
+  const currency = (payment?.currency || trip?.pricing?.currency || "USD").toUpperCase();
+  const totalFare = payment ? Number(payment.totalFare || 0) : mapTripFare(trip).total;
+  const driverGets = payment ? Number(payment.driverGets || 0) : computeDriverGets(trip);
+  const platformGets = payment ? Number(payment.platformGets || 0) : computePlatformGets(trip);
+
+  return {
+    _id: payment?._id || null,
+    provider: payment?.provider || null,
+    status: payment?.status || null,
+    currency,
+    totalFare,
+    driverGets,
+    platformGets,
+    received: platformGets,
+    paidAt: payment?.paidAt || null,
+    failureMessage: payment?.failureMessage || null,
+    stripeCustomerId: payment?.stripeCustomerId || null,
+    stripePaymentIntentId: payment?.stripePaymentIntentId || null,
+    stripePaymentMethodId: payment?.stripePaymentMethodId || null,
+    breakdown: payment?.breakdown
+      ? {
+          cancellationFee: Number(payment.breakdown.cancellationFee || 0),
+          platformFee: Number(payment.breakdown.platformFee || 0),
+        }
+      : null,
+    createdAt: payment?.createdAt || null,
+    updatedAt: payment?.updatedAt || null,
+  };
+};
+
+const mapRiderPaymentItem = ({ index, payment, trip }) => ({
+  no: index + 1,
+  _id: payment._id,
+  tripId: payment.tripId?._id || payment.tripId || trip?._id || null,
+  paymentId: payment._id,
+  rider: payment.riderId
+    ? {
+        _id: payment.riderId._id,
+        name: payment.riderId.name,
+        profileImage: payment.riderId.profileImage || null,
+        ratingAvg: Number(payment.riderId.ratingAvg || 0),
+        ratingCount: Number(payment.riderId.ratingCount || 0),
+      }
+    : null,
+  riderName: payment.riderId?.name || null,
+  driver: mapDriverSummary(payment.driverId),
+  driverName: payment.driverId?.name || null,
+  tripStatus: trip?.status || null,
+  paymentStatus: payment.status,
+  tripPaymentStatus: trip?.paymentStatus || null,
+  totalFare: Number(payment.totalFare || 0),
+  driverGets: Number(payment.driverGets || 0),
+  platformGets: Number(payment.platformGets || 0),
+  received: Number(payment.platformGets || 0),
+  currency: (payment.currency || "USD").toUpperCase(),
+  paidAt: payment.paidAt || null,
+  createdAt: payment.createdAt,
 });
 
 export const riderManagementService = {
@@ -250,6 +328,85 @@ export const riderManagementService = {
     };
   },
 
+  async listAllRiderPayments(adminUserId, query = {}) {
+    await ensureAdminUser(adminUserId);
+
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 10));
+    const skip = (page - 1) * limit;
+
+    const filter = {};
+    const paymentStatus = query.paymentStatus?.trim().toLowerCase();
+
+    if (["pending", "succeeded", "failed", "refunded"].includes(paymentStatus)) {
+      filter.status = paymentStatus;
+    }
+
+    const [payments, total] = await Promise.all([
+      Payment.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate("riderId", "name profileImage ratingAvg ratingCount")
+        .populate("driverId", "name profileImage ratingAvg ratingCount")
+        .populate("tripId", "status paymentStatus pricing createdAt updatedAt")
+        .lean(),
+      Payment.countDocuments(filter),
+    ]);
+
+    return {
+      items: payments.map((payment, index) =>
+        mapRiderPaymentItem({
+          index: skip + index,
+          payment,
+          trip: payment.tripId || null,
+        })
+      ),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    };
+  },
+
+  async getRiderPayments(adminUserId, riderId, query = {}) {
+    await ensureAdminUser(adminUserId);
+    await ensureRiderUser(riderId);
+
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 10));
+    const skip = (page - 1) * limit;
+
+    const [payments, total] = await Promise.all([
+      Payment.find({ riderId })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate("driverId", "name profileImage ratingAvg ratingCount")
+        .populate("tripId", "status paymentStatus pricing createdAt updatedAt")
+        .lean(),
+      Payment.countDocuments({ riderId }),
+    ]);
+
+    return {
+      items: payments.map((payment, index) =>
+        mapRiderPaymentItem({
+          index: skip + index,
+          payment,
+          trip: payment.tripId || null,
+        })
+      ),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    };
+  },
+
   async getRiderHistory(adminUserId, riderId) {
     await ensureAdminUser(adminUserId);
     await ensureRiderUser(riderId);
@@ -304,7 +461,7 @@ export const riderManagementService = {
       throw { status: 404, message: "Trip not found" };
     }
 
-    const [driver, vehicle, ratings] = await Promise.all([
+    const [driver, vehicle, ratings, payment] = await Promise.all([
       User.findById(trip.driverId).select("name profileImage ratingAvg ratingCount").lean(),
       trip.vehicleId
         ? Vehicle.findById(trip.vehicleId)
@@ -312,6 +469,7 @@ export const riderManagementService = {
             .lean()
         : null,
       Rating.find({ tripId }).lean(),
+      Payment.findOne({ tripId, riderId }).lean(),
     ]);
 
     const driverReview = ratings.find(
@@ -333,6 +491,7 @@ export const riderManagementService = {
         driverReview,
         riderReview,
       }),
+      payment: mapPaymentSummary(payment, trip),
     };
   },
 

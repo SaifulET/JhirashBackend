@@ -7,7 +7,9 @@ const adminRiderManagementRouter = express.Router();
 adminRiderManagementRouter.use(requireAuth);
 
 adminRiderManagementRouter.get("/", riderManagementController.listRiders);
+adminRiderManagementRouter.get("/payments", riderManagementController.listAllRiderPayments);
 adminRiderManagementRouter.get("/:riderId", riderManagementController.getRiderDetail);
+adminRiderManagementRouter.get("/:riderId/payments", riderManagementController.getRiderPayments);
 adminRiderManagementRouter.get("/:riderId/history", riderManagementController.getRiderHistory);
 adminRiderManagementRouter.get(
   "/:riderId/history/:tripId",
