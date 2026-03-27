@@ -3,9 +3,22 @@ import { legalContentController } from "./legalContent.controller.js";
 import { requireAuth } from "../../core_feature/middleware/requireAuth.js";
 
 const legalContentRouter = express.Router();
+const allowOnlyPublicMount = (req, res, next) => {
+  if (req.baseUrl === "/legal-content") {
+    return next();
+  }
+
+  return next("route");
+};
 
 legalContentRouter.get("/public/:type", legalContentController.getContentByType);
 legalContentRouter.get("/public/:type/:contentId", legalContentController.getContentById);
+legalContentRouter.get("/:type", allowOnlyPublicMount, legalContentController.getContentByType);
+legalContentRouter.get(
+  "/:type/:contentId",
+  allowOnlyPublicMount,
+  legalContentController.getContentById
+);
 
 legalContentRouter.use(requireAuth);
 
