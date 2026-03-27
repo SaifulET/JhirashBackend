@@ -46,5 +46,6 @@ driverHomeRouter.patch("/trip/:tripId/cancel", driverHomeController.cancelTrip);
 
 // completed/cancelled summary
 driverHomeRouter.get("/trip/:tripId/summary", driverHomeController.getTripCompletionSummary);
+driverHomeRouter.post("/support-ticket", driverHomeController.createSupportTicket);
 
 export default driverHomeRouter;

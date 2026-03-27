@@ -15,6 +15,7 @@ import {
   DRIVER_DISPATCH_ELIGIBLE_STATUSES,
   findNearbyAvailableDrivers,
 } from "../core_feature/utils/rideMatching/rideMatching.helper.js";
+import { createSupportTicketForUser } from "../core_feature/utils/supportTicket/supportTicket.helper.js";
 import { emitToUser, emitToUsers } from "../messages/socketRealtime.helper.js";
 import {
   buildRideRequestQuery,
@@ -1862,5 +1863,9 @@ async arrivedAtPickup(userId, tripId) {
           }
         : null,
     };
+  },
+
+  async createSupportTicket(userId, payload) {
+    return createSupportTicketForUser(userId, payload);
   },
 };

@@ -8,9 +8,9 @@ import { Trip } from "../models/Trip/Trip.model.js";
 import { FareConfig } from "../models/App_Config/App_Config.model.js";
 import { Vehicle } from "../models/Vehicle/Vehicle.model.js";
 import { Rating } from "../models/Rating/Rating.model.js";
-import { SupportTicket } from "../models/Support_tickets/Support_tickets.model.js";
 import { DriverProfile } from "../models/Driver_profile/Driver_profile.model.js";
 import { Payment } from "../models/Payment/Payment.model.js";
+import { createSupportTicketForUser } from "../core_feature/utils/supportTicket/supportTicket.helper.js";
 import {
   assertStripeConfigured,
   getStripePublishableKey,
@@ -1785,20 +1785,6 @@ export const riderGetRideService = {
   },
 
   async createSupportTicket(userId, payload) {
-    await getRiderUser(userId);
-
-    const ticket = await SupportTicket.create({
-      createdBy: userId,
-      againstUserId: payload.againstUserId || null,
-      tripId: payload.tripId || null,
-      title: payload.title,
-      message: payload.message,
-      status: "pending",
-    });
-
-    return {
-      message: "Support ticket created successfully",
-      ticket,
-    };
+    return createSupportTicketForUser(userId, payload);
   },
 };

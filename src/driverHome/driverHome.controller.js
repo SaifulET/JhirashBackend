@@ -317,4 +317,17 @@ export const driverHomeController = {
       return handleError(res, error);
     }
   },
+
+  async createSupportTicket(req, res) {
+    try {
+      const result = await driverHomeService.createSupportTicket(req.auth.userId, req.body);
+      return res.status(201).json({
+        success: true,
+        message: result.message,
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
 };
