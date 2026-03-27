@@ -124,6 +124,15 @@ const buildTripCancelledPayload = (trip) => ({
   trip,
 });
 
+const buildTripCompletedPayload = ({ trip, paymentSummary, autoCharge }) => ({
+  tripId: String(trip._id),
+  status: trip.status,
+  paymentStatus: trip.paymentStatus || null,
+  trip,
+  paymentSummary,
+  autoCharge,
+});
+
 const compareOtp = (plainOtp, trip) => {
   if (!trip?.otp?.hash) return false;
   return String(trip.otp.hash) === String(plainOtp);
@@ -1734,28 +1743,41 @@ async arrivedAtPickup(userId, tripId) {
       }
     }
 
-    if (!paymentIsRequired) {
-      await creditDriverEarnings(userId, driverGets);
-    }
+      if (!paymentIsRequired) {
+        await creditDriverEarnings(userId, driverGets);
+      }
 
-    return {
-      message: !paymentIsRequired
-        ? "Trip completed successfully"
-        : autoCharge.succeeded
-          ? "Trip completed and rider card charged successfully"
-          : autoCharge.attempted
-            ? "Trip completed, but automatic charge failed. Rider must complete payment manually."
-            : "Trip completed, but rider has no saved card. Manual payment is required.",
-      trip,
-      paymentSummary: {
+      const paymentSummary = {
         totalFare,
         driverGets,
         platformGets,
         paymentStatus: trip.paymentStatus,
-      },
-      autoCharge,
-    };
-  },
+      };
+
+      emitToUsers(
+        [userId, trip.riderId],
+        "trip:completed",
+        buildTripCompletedPayload({
+          trip,
+          paymentSummary,
+          autoCharge,
+        })
+      );
+      await emitDriverQueueSync(userId, profile, "trip_completed");
+
+      return {
+        message: !paymentIsRequired
+          ? "Trip completed successfully"
+          : autoCharge.succeeded
+          ? "Trip completed and rider card charged successfully"
+          : autoCharge.attempted
+              ? "Trip completed, but automatic charge failed. Rider must complete payment manually."
+              : "Trip completed, but rider has no saved card. Manual payment is required.",
+        trip,
+        paymentSummary,
+        autoCharge,
+      };
+    },
 
   async cancelTrip(userId, tripId, payload) {
     await getDriverUser(userId);
