@@ -1,10 +1,12 @@
 // tripChat/tripChat.socket.js
-import { Message } from "../models/Message/message.model.js";
+import { tripChatService } from "./tripChat.service.js";
+import {
+  emitChatMessageRealtime,
+  emitChatSeenRealtime,
+} from "./tripChatRealtime.helper.js";
 import {
   getTripRoom,
   getTripForParticipantOrFail,
-  getOtherParticipantId,
-  mapMessageDeliveryStatus,
 } from "../core_feature/utils/chatHelper/tripChat.helper.js";
 
 export const registerTripChatSocket = (io) => {
@@ -34,30 +36,7 @@ export const registerTripChatSocket = (io) => {
 
     socket.on("chat:send", async ({ tripId, text, tempId }) => {
       try {
-        const trip = await getTripForParticipantOrFail(tripId, socket.user.id);
-
-        if (!text || !text.trim()) {
-          return socket.emit("chat:error", {
-            message: "Message text is required",
-            tempId: tempId || null,
-          });
-        }
-
-        const receiverId = getOtherParticipantId(trip, socket.user.id);
-
-        const message = await Message.create({
-          tripId,
-          senderId: socket.user.id,
-          receiverId,
-          text: text.trim(),
-        });
-
-        const populatedMessage = await Message.findById(message._id)
-          .populate("senderId", "name profileImage role")
-          .populate("receiverId", "name profileImage role")
-          .lean();
-
-        const finalMessage = mapMessageDeliveryStatus(populatedMessage);
+        const finalMessage = await tripChatService.sendMessage(socket.user.id, tripId, { text });
 
         // sender ack: sending -> sent
         socket.emit("chat:sent", {
@@ -65,8 +44,10 @@ export const registerTripChatSocket = (io) => {
           message: finalMessage,
         });
 
-        // broadcast to trip room
-        io.to(getTripRoom(tripId)).emit("chat:new", finalMessage);
+        emitChatMessageRealtime({
+          message: finalMessage,
+          socket,
+        });
       } catch (error) {
         socket.emit("chat:error", {
           message: error.message || "Failed to send message",
@@ -77,34 +58,13 @@ export const registerTripChatSocket = (io) => {
 
     socket.on("chat:seen", async ({ tripId }) => {
       try {
-        await getTripForParticipantOrFail(tripId, socket.user.id);
+        const result = await tripChatService.markSeen(socket.user.id, tripId);
+        const { participantUserIds = [], ...seenPayload } = result;
 
-        const now = new Date();
-
-        await Message.updateMany(
-          {
-            tripId,
-            receiverId: socket.user.id,
-            readAt: null,
-          },
-          {
-            $set: { readAt: now },
-          }
-        );
-
-        const lastSeenMessage = await Message.findOne({
-          tripId,
-          receiverId: socket.user.id,
-          readAt: { $ne: null },
-        })
-          .sort({ createdAt: -1 })
-          .lean();
-
-        io.to(getTripRoom(tripId)).emit("chat:seen:update", {
-          tripId,
-          seenBy: socket.user.id,
-          lastSeenMessageId: lastSeenMessage?._id || null,
-          seenAt: now,
+        emitChatSeenRealtime({
+          seenPayload,
+          participantUserIds,
+          socket,
         });
       } catch (error) {
         socket.emit("chat:error", {

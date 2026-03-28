@@ -1,5 +1,9 @@
 // tripChat/tripChat.controller.js
 import { tripChatService } from "./tripChat.service.js";
+import {
+  emitChatMessageRealtime,
+  emitChatSeenRealtime,
+} from "./tripChatRealtime.helper.js";
 
 const handleError = (res, error) => {
   return res.status(error.status || 500).json({
@@ -41,6 +45,7 @@ export const tripChatController = {
   async sendMessage(req, res) {
     try {
       const result = await tripChatService.sendMessage(req.auth.userId, req.params.tripId, req.body);
+      emitChatMessageRealtime({ message: result });
 
       return res.status(201).json({
         success: true,
@@ -55,11 +60,17 @@ export const tripChatController = {
   async markSeen(req, res) {
     try {
       const result = await tripChatService.markSeen(req.auth.userId, req.params.tripId);
+      const { participantUserIds = [], ...responseData } = result;
+
+      emitChatSeenRealtime({
+        seenPayload: responseData,
+        participantUserIds,
+      });
 
       return res.status(200).json({
         success: true,
         message: "Messages marked as seen",
-        data: result,
+        data: responseData,
       });
     } catch (error) {
       return handleError(res, error);

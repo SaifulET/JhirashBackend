@@ -85,7 +85,8 @@ export const tripChatService = {
   },
 
   async markSeen(userId, tripId) {
-    await getTripForParticipantOrFail(tripId, userId);
+    const trip = await getTripForParticipantOrFail(tripId, userId);
+    const otherUserId = getOtherParticipantId(trip, userId);
 
     const now = new Date();
 
@@ -112,6 +113,8 @@ export const tripChatService = {
       tripId,
       seenAt: now,
       lastSeenMessageId: lastSeenMessage?._id || null,
+      seenBy: userId,
+      participantUserIds: [userId, otherUserId],
     };
   },
 
