@@ -77,23 +77,6 @@ export const adminAuthController = {
     }
   },
 
-  async changeName(req, res) {
-    try {
-      const result = await adminAuthService.changeName({
-        adminUserId: req.auth.userId,
-        ...req.body,
-      });
-
-      return res.status(200).json({
-        success: true,
-        message: "Admin name changed successfully",
-        data: result,
-      });
-    } catch (error) {
-      return handleError(res, error);
-    }
-  },
-
   async refresh(req, res) {
     try {
       const result = await adminAuthService.refresh(req.body);

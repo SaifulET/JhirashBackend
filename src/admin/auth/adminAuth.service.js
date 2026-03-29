@@ -357,52 +357,29 @@ export const adminAuthService = {
     }
 
     if (RefreshToken) {
-      const payload = verifyRefreshToken(refreshToken);
-      const session = await RefreshToken.findById(payload.tid);
+      const tokenPayload = verifyRefreshToken(refreshToken);
+      const session = await RefreshToken.findById(tokenPayload.tid);
 
       if (!session || session.revokedAt) {
         throw { status: 401, message: "Refresh token revoked" };
       }
 
-      const admin = await ensureAdminById(payload.sub);
+      const admin = await ensureAdminById(tokenPayload.sub);
       if (admin.status !== "active") {
         throw { status: 403, message: "Admin account is not active" };
       }
 
-      return {
-        accessToken: signAccessToken(admin),
-        admin: sanitizeAdminUser(admin),
-      };
+      return { accessToken: signAccessToken(admin) };
     }
 
-    const payload = verifyRefreshToken(refreshToken);
-    const admin = await ensureAdminById(payload.sub);
+    const tokenPayload = verifyRefreshToken(refreshToken);
+    const admin = await ensureAdminById(tokenPayload.sub);
 
     if (admin.status !== "active") {
       throw { status: 403, message: "Admin account is not active" };
     }
 
-    return {
-      accessToken: signAccessToken(admin),
-      admin: sanitizeAdminUser(admin),
-    };
-  },
-
-  async changeName({ adminUserId, name }) {
-    const trimmedName = String(name || "").trim();
-
-    if (!trimmedName) {
-      throw { status: 400, message: "name is required" };
-    }
-
-    const admin = await ensureAdminById(adminUserId);
-    admin.name = trimmedName;
-    await admin.save();
-
-    return {
-      message: "Admin name changed successfully",
-      admin: sanitizeAdminUser(admin),
-    };
+    return { accessToken: signAccessToken(admin) };
   },
 
   async logout({ refreshToken }) {

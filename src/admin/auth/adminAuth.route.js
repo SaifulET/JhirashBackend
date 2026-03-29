@@ -10,7 +10,6 @@ adminAuthRouter.post("/verify-code", adminAuthController.verifyCode);
 adminAuthRouter.post("/set-new-password", adminAuthController.setNewPassword);
 adminAuthRouter.post("/refresh", adminAuthController.refresh);
 adminAuthRouter.post("/logout", adminAuthController.logout);
-adminAuthRouter.patch("/change-name", requireAuth, adminAuthController.changeName);
 adminAuthRouter.patch("/change-password", requireAuth, adminAuthController.changePassword);
 
 export default adminAuthRouter;
