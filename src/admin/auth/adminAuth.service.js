@@ -161,6 +161,20 @@ const assertStrongPassword = (password, fieldName = "newPassword") => {
   }
 };
 
+const assertValidName = (name) => {
+  const normalizedName = String(name || "").trim();
+
+  if (!normalizedName) {
+    throw { status: 400, message: "name is required" };
+  }
+
+  if (normalizedName.length < 2) {
+    throw { status: 400, message: "name must be at least 2 characters" };
+  }
+
+  return normalizedName;
+};
+
 const sendAdminResetCodeEmail = async ({ email, otp, adminName }) => {
   await sendEmail({
     to: email,
@@ -315,6 +329,19 @@ export const adminAuthService = {
     }
 
     return { message: "Password reset successfully" };
+  },
+
+  async changeName({ adminUserId, name, newName }) {
+    const nextName = assertValidName(newName || name);
+    const admin = await ensureAdminById(adminUserId);
+
+    admin.name = nextName;
+    await admin.save();
+
+    return {
+      message: "Name changed successfully",
+      admin: sanitizeAdminUser(admin),
+    };
   },
 
   async changePassword({ adminUserId, currentPassword, newPassword, confirmPassword }) {
