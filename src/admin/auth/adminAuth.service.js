@@ -369,7 +369,10 @@ export const adminAuthService = {
         throw { status: 403, message: "Admin account is not active" };
       }
 
-      return { accessToken: signAccessToken(admin) };
+      return {
+        accessToken: signAccessToken(admin),
+        admin: sanitizeAdminUser(admin),
+      };
     }
 
     const payload = verifyRefreshToken(refreshToken);
@@ -379,7 +382,27 @@ export const adminAuthService = {
       throw { status: 403, message: "Admin account is not active" };
     }
 
-    return { accessToken: signAccessToken(admin) };
+    return {
+      accessToken: signAccessToken(admin),
+      admin: sanitizeAdminUser(admin),
+    };
+  },
+
+  async changeName({ adminUserId, name }) {
+    const trimmedName = String(name || "").trim();
+
+    if (!trimmedName) {
+      throw { status: 400, message: "name is required" };
+    }
+
+    const admin = await ensureAdminById(adminUserId);
+    admin.name = trimmedName;
+    await admin.save();
+
+    return {
+      message: "Admin name changed successfully",
+      admin: sanitizeAdminUser(admin),
+    };
   },
 
   async logout({ refreshToken }) {
