@@ -10,6 +10,7 @@ const handleError = (res, error) => {
 export const adminAuthController = {
   async signin(req, res) {
     try {
+      console.log("Signin Request Body:", req.body);
       const result = await adminAuthService.signin(req.body);
       return res.status(200).json({
         success: true,

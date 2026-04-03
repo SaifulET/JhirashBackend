@@ -9,7 +9,7 @@ import { sendEmail } from "../../core_feature/utils/mailerSender/mailer.js";
 const RefreshToken = mongoose.models.RefreshToken;
 
 const ACCESS_TOKEN_SECRET =
-  
+  process.env.ACCESS_TOKEN_SECRET ||
   process.env.JWT_ACCESS_SECRET ||
   process.env.JWT_SECRET ||
   "access_secret";

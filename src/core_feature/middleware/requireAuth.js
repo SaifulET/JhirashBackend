@@ -16,7 +16,7 @@ export function requireAuth(req, res, next) {
    
     const [type, token] = header.split(" ");
   
-
+console.log("Auth Header:", header);
     if (type !== "Bearer" || !token) {
       return res.status(401).json({ success: false, error: { code: "UNAUTHORIZED", message: "Missing token" } });
     }
