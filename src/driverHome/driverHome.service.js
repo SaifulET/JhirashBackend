@@ -10,7 +10,7 @@ import { Trip } from "../models/Trip/Trip.model.js";
 import { Payment } from "../models/Payment/Payment.model.js";
 import { Rating } from "../models/Rating/Rating.model.js";
 import { DriverOnlineSession } from "../models/Driver_online_session/DriverOnlineSession.model.js";
-import { stripe } from "../core_feature/utils/stripe/stripe.js";
+import { getStripeClientForEmail } from "../core_feature/utils/stripe/stripe.js";
 import {
   DRIVER_DISPATCH_ELIGIBLE_STATUSES,
   findNearbyAvailableDrivers,
@@ -698,7 +698,10 @@ const buildAutoChargeResult = (payload = {}) => ({
 });
 
 const attemptAutomaticTripCharge = async ({ trip, riderProfile, driverProfile }) => {
-  if (!stripe) {
+  const riderUser = await User.findById(trip.riderId).select("email").lean();
+  const stripeClient = getStripeClientForEmail(riderUser?.email);
+
+  if (!stripeClient) {
     return buildAutoChargeResult({
       status: "stripe_unavailable",
       failureMessage: "Stripe is not configured",
@@ -746,7 +749,7 @@ const attemptAutomaticTripCharge = async ({ trip, riderProfile, driverProfile })
   }
 
   try {
-    const paymentIntent = await stripe.paymentIntents.create(paymentIntentPayload);
+    const paymentIntent = await stripeClient.paymentIntents.create(paymentIntentPayload);
 
     return buildAutoChargeResult({
       attempted: true,

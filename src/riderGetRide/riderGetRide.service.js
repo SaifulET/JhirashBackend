@@ -12,9 +12,9 @@ import { DriverProfile } from "../models/Driver_profile/Driver_profile.model.js"
 import { Payment } from "../models/Payment/Payment.model.js";
 import { createSupportTicketForUser } from "../core_feature/utils/supportTicket/supportTicket.helper.js";
 import {
-  assertStripeConfigured,
+  assertStripeConfiguredForEmail,
+  getStripeClientForEmail,
   getStripePublishableKey,
-  stripe,
 } from "../core_feature/utils/stripe/stripe.js";
 import { findNearbyAvailableDrivers } from "../core_feature/utils/rideMatching/rideMatching.helper.js";
 import { emitDriverQueuePayloadToUsers } from "../driverHome/driverRideRequestQueue.helper.js";
@@ -422,13 +422,24 @@ const buildPaymentMethodSummary = (paymentMethod) => {
   };
 };
 
-const getSavedPaymentMethodSummary = async (paymentMethodId) => {
-  if (!paymentMethodId || !stripe) {
+const isStripeResourceMissingError = (error) =>
+  error?.code === "resource_missing" || error?.raw?.code === "resource_missing";
+
+const getSavedPaymentMethodSummary = async (paymentMethodId, stripeClient) => {
+  if (!paymentMethodId || !stripeClient) {
     return null;
   }
 
-  const paymentMethod = await stripe.paymentMethods.retrieve(paymentMethodId);
-  return buildPaymentMethodSummary(paymentMethod);
+  try {
+    const paymentMethod = await stripeClient.paymentMethods.retrieve(paymentMethodId);
+    return buildPaymentMethodSummary(paymentMethod);
+  } catch (error) {
+    if (isStripeResourceMissingError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
 };
 
 const getCompletedTripForPayment = async (userId, tripId) => {
@@ -499,12 +510,21 @@ const upsertTripPaymentRecord = async (trip, overrides = {}, options = {}) => {
   );
 };
 
-const getOrCreateStripeCustomer = async (riderUser, riderProfile) => {
+const getOrCreateStripeCustomer = async (riderUser, riderProfile, stripeClient) => {
   if (riderProfile?.stripeCustomerId) {
-    return riderProfile.stripeCustomerId;
+    try {
+      const customer = await stripeClient.customers.retrieve(riderProfile.stripeCustomerId);
+      if (!customer?.deleted) {
+        return riderProfile.stripeCustomerId;
+      }
+    } catch (error) {
+      if (!isStripeResourceMissingError(error)) {
+        throw error;
+      }
+    }
   }
 
-  const customer = await stripe.customers.create({
+  const customer = await stripeClient.customers.create({
     name: riderUser.name,
     email: riderUser.email || undefined,
     phone: riderUser.phone || undefined,
@@ -606,14 +626,18 @@ export const riderGetRideService = {
   },
 
   async getPaymentMethodStatus(userId) {
-    await getRiderUser(userId);
+    const riderUser = await getRiderUser(userId);
+    const stripeClient = getStripeClientForEmail(riderUser.email);
 
     const riderProfile = await getOrCreateRiderProfile(userId);
-    const paymentMethod = await getSavedPaymentMethodSummary(riderProfile.defaultPaymentMethodId);
+    const paymentMethod = await getSavedPaymentMethodSummary(
+      riderProfile.defaultPaymentMethodId,
+      stripeClient
+    );
 
     return {
-      stripeConfigured: Boolean(stripe),
-      publishableKey: getStripePublishableKey(),
+      stripeConfigured: Boolean(stripeClient),
+      publishableKey: getStripePublishableKey(riderUser.email),
       customerId: riderProfile.stripeCustomerId || null,
       defaultPaymentMethodId: riderProfile.defaultPaymentMethodId || null,
       paymentMethod,
@@ -621,13 +645,12 @@ export const riderGetRideService = {
   },
 
   async createPaymentSetupIntent(userId) {
-    assertStripeConfigured();
-
     const riderUser = await getRiderUser(userId);
+    const stripeClient = assertStripeConfiguredForEmail(riderUser.email);
     const riderProfile = await getOrCreateRiderProfile(userId);
-    const stripeCustomerId = await getOrCreateStripeCustomer(riderUser, riderProfile);
+    const stripeCustomerId = await getOrCreateStripeCustomer(riderUser, riderProfile, stripeClient);
 
-    const setupIntent = await stripe.setupIntents.create({
+    const setupIntent = await stripeClient.setupIntents.create({
       customer: stripeCustomerId,
       payment_method_types: ["card"],
       usage: "off_session",
@@ -640,25 +663,27 @@ export const riderGetRideService = {
       message: "Payment setup intent created successfully",
       setupIntentId: setupIntent.id,
       clientSecret: setupIntent.client_secret,
-      publishableKey: getStripePublishableKey(),
+      publishableKey: getStripePublishableKey(riderUser.email),
       customerId: stripeCustomerId,
       defaultPaymentMethodId: riderProfile.defaultPaymentMethodId || null,
-      paymentMethod: await getSavedPaymentMethodSummary(riderProfile.defaultPaymentMethodId),
+      paymentMethod: await getSavedPaymentMethodSummary(
+        riderProfile.defaultPaymentMethodId,
+        stripeClient
+      ),
     };
   },
 
   async savePaymentMethod(userId, payload = {}) {
-    assertStripeConfigured();
-
     const riderUser = await getRiderUser(userId);
+    const stripeClient = assertStripeConfiguredForEmail(riderUser.email);
     const riderProfile = await getOrCreateRiderProfile(userId);
 
     if (!payload?.setupIntentId) {
       throw { status: 400, message: "setupIntentId is required" };
     }
 
-    const stripeCustomerId = await getOrCreateStripeCustomer(riderUser, riderProfile);
-    const setupIntent = await stripe.setupIntents.retrieve(payload.setupIntentId);
+    const stripeCustomerId = await getOrCreateStripeCustomer(riderUser, riderProfile, stripeClient);
+    const setupIntent = await stripeClient.setupIntents.retrieve(payload.setupIntentId);
 
     if (!setupIntent) {
       throw { status: 404, message: "Setup intent not found" };
@@ -678,18 +703,18 @@ export const riderGetRideService = {
       throw { status: 400, message: "Payment method not found on setup intent" };
     }
 
-    let paymentMethod = await stripe.paymentMethods.retrieve(paymentMethodId);
+    let paymentMethod = await stripeClient.paymentMethods.retrieve(paymentMethodId);
     const paymentMethodCustomerId = getStripeObjectId(paymentMethod.customer);
 
     if (!paymentMethodCustomerId) {
-      paymentMethod = await stripe.paymentMethods.attach(paymentMethodId, {
+      paymentMethod = await stripeClient.paymentMethods.attach(paymentMethodId, {
         customer: stripeCustomerId,
       });
     } else if (paymentMethodCustomerId !== stripeCustomerId) {
       throw { status: 400, message: "Payment method does not belong to this rider" };
     }
 
-    await stripe.customers.update(stripeCustomerId, {
+    await stripeClient.customers.update(stripeCustomerId, {
       invoice_settings: {
         default_payment_method: paymentMethodId,
       },
@@ -704,7 +729,7 @@ export const riderGetRideService = {
       customerId: stripeCustomerId,
       defaultPaymentMethodId: paymentMethodId,
       paymentMethod: buildPaymentMethodSummary(paymentMethod),
-      publishableKey: getStripePublishableKey(),
+      publishableKey: getStripePublishableKey(riderUser.email),
     };
   },
 
@@ -1470,7 +1495,7 @@ export const riderGetRideService = {
   },
 
   async getTripPaymentSummary(userId, tripId) {
-    await getRiderUser(userId);
+    const riderUser = await getRiderUser(userId);
 
     const trip = await getCompletedTripForPayment(userId, tripId);
     const payment = await upsertTripPaymentRecord(trip);
@@ -1493,14 +1518,13 @@ export const riderGetRideService = {
         paidAt: payment.paidAt || null,
         failureMessage: payment.failureMessage || null,
       },
-      publishableKey: getStripePublishableKey(),
+      publishableKey: getStripePublishableKey(riderUser.email),
     };
   },
 
   async createTripPaymentIntent(userId, tripId, payload = {}) {
-    assertStripeConfigured();
-
     const riderUser = await getRiderUser(userId);
+    const stripeClient = assertStripeConfiguredForEmail(riderUser.email);
     const riderProfile = await getOrCreateRiderProfile(userId);
     const trip = await getCompletedTripForPayment(userId, tripId);
 
@@ -1516,7 +1540,7 @@ export const riderGetRideService = {
         alreadyPaid: true,
         paymentIntentId: existingPayment.stripePaymentIntentId || null,
         clientSecret: null,
-        publishableKey: getStripePublishableKey(),
+        publishableKey: getStripePublishableKey(riderUser.email),
         payment: existingPayment,
       };
     }
@@ -1541,44 +1565,50 @@ export const riderGetRideService = {
         alreadyPaid: true,
         paymentIntentId: zeroFarePayment.stripePaymentIntentId || null,
         clientSecret: null,
-        publishableKey: getStripePublishableKey(),
+        publishableKey: getStripePublishableKey(riderUser.email),
         payment: zeroFarePayment,
       };
     }
 
-    const stripeCustomerId = await getOrCreateStripeCustomer(riderUser, riderProfile);
+    const stripeCustomerId = await getOrCreateStripeCustomer(riderUser, riderProfile, stripeClient);
 
     if (payment.stripePaymentIntentId) {
-      const existingIntent = await stripe.paymentIntents.retrieve(payment.stripePaymentIntentId);
-      if (
-        ["requires_payment_method", "requires_confirmation", "requires_action", "processing"].includes(
-          existingIntent.status
-        )
-      ) {
-        await upsertTripPaymentRecord(trip, {
-          stripeCustomerId,
-          status: existingIntent.status === "requires_payment_method" ? "failed" : "pending",
-          failureMessage: existingIntent.last_payment_error?.message || null,
-        });
+      try {
+        const existingIntent = await stripeClient.paymentIntents.retrieve(payment.stripePaymentIntentId);
+        if (
+          ["requires_payment_method", "requires_confirmation", "requires_action", "processing"].includes(
+            existingIntent.status
+          )
+        ) {
+          await upsertTripPaymentRecord(trip, {
+            stripeCustomerId,
+            status: existingIntent.status === "requires_payment_method" ? "failed" : "pending",
+            failureMessage: existingIntent.last_payment_error?.message || null,
+          });
 
-        return {
-          message: "Existing payment intent fetched successfully",
-          alreadyPaid: false,
-          paymentIntentId: existingIntent.id,
-          clientSecret: existingIntent.client_secret,
-          publishableKey: getStripePublishableKey(),
-          customerId: stripeCustomerId,
-          amount: {
-            currency: payment.currency,
-            totalFare: payment.totalFare,
-            driverGets: payment.driverGets,
-            platformGets: payment.platformGets,
-          },
-        };
+          return {
+            message: "Existing payment intent fetched successfully",
+            alreadyPaid: false,
+            paymentIntentId: existingIntent.id,
+            clientSecret: existingIntent.client_secret,
+            publishableKey: getStripePublishableKey(riderUser.email),
+            customerId: stripeCustomerId,
+            amount: {
+              currency: payment.currency,
+              totalFare: payment.totalFare,
+              driverGets: payment.driverGets,
+              platformGets: payment.platformGets,
+            },
+          };
+        }
+      } catch (error) {
+        if (!isStripeResourceMissingError(error)) {
+          throw error;
+        }
       }
     }
 
-    const paymentIntent = await stripe.paymentIntents.create({
+    const paymentIntent = await stripeClient.paymentIntents.create({
       amount: Math.round(Number(payment.totalFare) * 100),
       currency: String(payment.currency || "USD").toLowerCase(),
       customer: stripeCustomerId,
@@ -1603,7 +1633,7 @@ export const riderGetRideService = {
       alreadyPaid: false,
       paymentIntentId: paymentIntent.id,
       clientSecret: paymentIntent.client_secret,
-      publishableKey: getStripePublishableKey(),
+      publishableKey: getStripePublishableKey(riderUser.email),
       customerId: stripeCustomerId,
       amount: {
         currency: payment.currency,
@@ -1616,9 +1646,8 @@ export const riderGetRideService = {
   },
 
   async verifyTripPayment(userId, tripId, payload = {}) {
-    assertStripeConfigured();
-
-    await getRiderUser(userId);
+    const riderUser = await getRiderUser(userId);
+    const stripeClient = assertStripeConfiguredForEmail(riderUser.email);
     const trip = await getCompletedTripForPayment(userId, tripId);
     const riderProfile = await getOrCreateRiderProfile(userId);
     const payment = await upsertTripPaymentRecord(trip);
@@ -1628,7 +1657,7 @@ export const riderGetRideService = {
       throw { status: 400, message: "Payment intent not found for this trip" };
     }
 
-    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    const paymentIntent = await stripeClient.paymentIntents.retrieve(paymentIntentId);
     if (paymentIntent?.metadata?.tripId && paymentIntent.metadata.tripId !== String(trip._id)) {
       throw { status: 400, message: "Payment intent does not belong to this trip" };
     }
