@@ -4,6 +4,11 @@ import { User } from "../../../models/User/User.model.js";
 import { DriverProfile } from "../../../models/Driver_profile/Driver_profile.model.js";
 import { Vehicle } from "../../../models/Vehicle/Vehicle.model.js";
 import { DriverDocument } from "../../../models/Driver_documents/Driver_documents.model.js";
+import {
+  getVehicleReviewStatus,
+  normalizeReviewStatus,
+  syncDriverDocumentSummary,
+} from "../driver_documents.service.js";
 
 const validateDriver = async (userId) => {
   const user = await User.findById(userId)
@@ -26,31 +31,35 @@ const mapDocument = (doc) => {
     return null;
   }
 
+  const normalizedStatus = normalizeReviewStatus(doc.status);
+  const status = normalizedStatus === "approved"
+    ? "completed"
+    : normalizedStatus === "in_review"
+      ? "in_review"
+      : "need_attention";
+
   return {
     _id: doc._id,
     type: doc.type,
     fileUrl: doc.fileUrl,
-    status: doc.status,
+    status,
+    rawStatus: doc.status,
     rejectionReason: doc.rejectionReason || null,
     reviewedAt: doc.reviewedAt || null,
   };
 };
 
+const mapClientStatus = (status) =>
+  status === "approved" ? "completed" : status === "in_review" ? "in_review" : "need_attention";
+
 export const driverOnboardingReadService = {
 async getSummary(userId) {
   await validateDriver(userId);
 
-  const [driverProfile, vehicle, documents] = await Promise.all([
-    DriverProfile.findOne({ userId })
-      .select("stripeAccountId stripeConnected")
-      .lean(),
-
+  const [driverProfile, vehicle] = await Promise.all([
+    syncDriverDocumentSummary(userId),
     Vehicle.findOne({ driverId: userId, isActive: true })
-      .select("_id brand model year type size seats licensePlate approved isActive")
-      .lean(),
-
-    DriverDocument.find({ driverId: userId })
-      .select("type")
+      .select("_id brand model year type size seats licensePlate approved reviewStatus isActive")
       .lean(),
   ]);
 
@@ -58,19 +67,11 @@ async getSummary(userId) {
     throw { status: 404, message: "Driver profile not found" };
   }
 
-  // Convert documents -> Set for O(1) checks
-  const docTypes = new Set(documents.map(d => d.type));
-
-  let missingCount = 0;
-
-  if (!driverProfile.stripeAccountId) missingCount++;
-  if (!docTypes.has("driver_license_front")) missingCount++;
-  if (!docTypes.has("driver_license_back")) missingCount++;
-  if (!docTypes.has("vehicle_registration")) missingCount++;
-  if (!docTypes.has("vehicle_insurance")) missingCount++;
-  if (!vehicle) missingCount++;
-
-  return { missingCount };
+  return {
+    requiredActionsCount: Number(driverProfile.requiredActionsCount || 0),
+    documentsStatus: driverProfile.documentsStatus || "pending",
+    vehicleStatus: mapClientStatus(getVehicleReviewStatus(vehicle)),
+  };
 },
 
   async getProfileImage(userId) {
@@ -97,8 +98,8 @@ async getSummary(userId) {
     ]);
 
     return {
-      front: front || null,
-      back: back || null,
+      front: mapDocument(front),
+      back: mapDocument(back),
     };
   },
 
@@ -111,7 +112,7 @@ async getSummary(userId) {
     ).lean();
 
     return {
-      vehicleRegistration: registration || null,
+      vehicleRegistration: mapDocument(registration),
     };
   },
 
@@ -124,7 +125,7 @@ async getSummary(userId) {
     ).lean();
 
     return {
-      vehicleInsurance: insurance || null,
+      vehicleInsurance: mapDocument(insurance),
     };
   },
 
@@ -161,12 +162,20 @@ async getSummary(userId) {
         seats: 1,
         licensePlate: 1,
         approved: 1,
+        reviewStatus: 1,
+        rejectionReason: 1,
+        reviewedAt: 1,
         isActive: 1,
       }
     ).lean();
 
     return {
-      vehicle: vehicle || null,
+      vehicle: vehicle
+        ? {
+            ...vehicle,
+            status: mapClientStatus(getVehicleReviewStatus(vehicle)),
+          }
+        : null,
     };
   },
 };

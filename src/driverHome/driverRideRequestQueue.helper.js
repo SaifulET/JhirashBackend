@@ -2,6 +2,7 @@ import { RideRequest } from "../models/Ride_request/Ride_request.model.js";
 import { DriverProfile } from "../models/Driver_profile/Driver_profile.model.js";
 import {
   DRIVER_DISPATCH_ELIGIBLE_STATUSES,
+  hasCompletedDriverRequirements,
   TEN_KILOMETERS_IN_METERS,
   TEN_KILOMETERS_IN_MILES,
 } from "../core_feature/utils/rideMatching/rideMatching.helper.js";
@@ -64,7 +65,8 @@ export const isDriverQueueEligible = (driverProfile) =>
   Boolean(
     driverProfile?.isOnline &&
       !driverProfile?.isBusy &&
-      DRIVER_DISPATCH_ELIGIBLE_STATUSES.includes(driverProfile?.status)
+      DRIVER_DISPATCH_ELIGIBLE_STATUSES.includes(driverProfile?.status) &&
+      hasCompletedDriverRequirements(driverProfile)
   );
 
 export const emitDriverQueuePayloadToUser = async (driverId, triggeredBy = "system_update") => {

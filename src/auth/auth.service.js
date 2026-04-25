@@ -31,6 +31,31 @@ function randomOtp4() {
   return String(Math.floor(1000 + Math.random() * 9000));
 }
 
+async function sendOtpEmail({ email, otp, name, purpose = "email_verification" }) {
+  const isPasswordReset = purpose === "password_reset";
+  const safeName = String(name || "").trim();
+  const greetingName = safeName || "there";
+  const subject = isPasswordReset ? "Password Reset Code" : "Email Verification Code";
+  const actionText = isPasswordReset ? "reset your password" : "verify your email";
+  const codeLabel = isPasswordReset ? "password reset" : "email verification";
+
+  await sendEmail({
+    to: email,
+    subject,
+    text: `Hello ${greetingName},\n\nYour ${codeLabel} code is: ${otp}\n\nEnter this code to ${actionText}. The code expires in ${OTP_TTL_MINUTES} minutes.\n\nIf you didn't request this, please ignore this email.`,
+    html: `<div style="font-family: Arial, sans-serif; color: #222;">
+      <h3 style="margin-bottom: 8px;">${isPasswordReset ? "Password Reset" : "Verify Email"}</h3>
+      <p>Hello ${greetingName},</p>
+      <p>Use this verification code to ${actionText}:</p>
+      <div style="background: #f5f5f5; padding: 15px; margin: 15px 0; font-size: 28px; font-weight: bold; text-align: center; letter-spacing: 8px;">
+        ${otp}
+      </div>
+      <p>This code expires in <strong>${OTP_TTL_MINUTES} minutes</strong>.</p>
+      <p style="color: #666; font-size: 12px;">If you didn't request this, please ignore this email.</p>
+    </div>`,
+  });
+}
+
 function signAccessToken(user) {
   return jwt.sign({ sub: String(user._id), role: user.role }, JWT_ACCESS_SECRET, {
     expiresIn: ACCESS_EXPIRES_IN,
@@ -145,21 +170,12 @@ export const authService = {
   await  user.save()
 
   // Send OTP via email
- await sendEmail({
-  to: email,
-  subject: "Password Reset Code",
-  text: `Hello,\n\nYour YourApp password reset code is: ${otp}\n\nEnter this code to reset your password. The code expires in 10 minutes.\n\nIf you didn't request this, please secure your account.`,
-  html: `<div style="font-family: Arial, sans-serif;">
-           <h3>Verify Email</h3>
-           <p>Hello,</p>
-           <p>Verify your Email:</p>
-           <div style="background: #f0f0f0; padding: 15px; margin: 15px 0; font-size: 28px; font-weight: bold; text-align: center;">
-             ${otp}
-           </div>
-           <p>Enter this code to verify email. This code will expire in <strong>10 minutes</strong>.</p>
-           <p style="color: #666; font-size: 12px;">If you didn't request for verifing email, please ignore this email or contact support if you're concerned.</p>
-         </div>`,
-});
+    await sendOtpEmail({
+      email: user.email,
+      otp,
+      name: user.name,
+      purpose: "email_verification",
+    });
 
     await createToken({ userId: user._id, type: "email_otp", tokenPlain: otp, meta: { email: user.email } });
 
@@ -264,10 +280,24 @@ export const authService = {
   },
 
   async sendVerificationOtp({ email }) {
-    const user = await User.findOne({ email: email?.toLowerCase(), isDeleted: { $ne: true } });
+    const normalizedEmail = String(email || "")
+      .trim()
+      .toLowerCase();
+
+    if (!normalizedEmail) {
+      throw { status: 400, code: "VALIDATION_ERROR", message: "Email is required" };
+    }
+
+    const user = await User.findOne({ email: normalizedEmail, isDeleted: { $ne: true } });
     if (!user) throw { status: 404, code: "NOT_FOUND", message: "User not found" };
 
     const otp = randomOtp4();
+    await sendOtpEmail({
+      email: user.email,
+      otp,
+      name: user.name,
+      purpose: "email_verification",
+    });
     await createToken({ userId: user._id, type: "email_otp", tokenPlain: otp, meta: { email: user.email } });
 
     return { message: "Verification code sent", otpForDev: otp };
@@ -358,21 +388,12 @@ export const authService = {
   await  user.save()
 
   // Send OTP via email
- await sendEmail({
-  to: email,
-  subject: "Password Reset Code",
-  text: `Hello,\n\nYour YourApp password reset code is: ${otp}\n\nEnter this code to reset your password. The code expires in 10 minutes.\n\nIf you didn't request this, please secure your account.`,
-  html: `<div style="font-family: Arial, sans-serif;">
-           <h3>Verify Email</h3>
-           <p>Hello,</p>
-           <p>Verify your Email:</p>
-           <div style="background: #f0f0f0; padding: 15px; margin: 15px 0; font-size: 28px; font-weight: bold; text-align: center;">
-             ${otp}
-           </div>
-           <p>Enter this code to verify email. This code will expire in <strong>10 minutes</strong>.</p>
-           <p style="color: #666; font-size: 12px;">If you didn't request for verifing email, please ignore this email or contact support if you're concerned.</p>
-         </div>`,
-});
+    await sendOtpEmail({
+      email: user.email,
+      otp,
+      name: user.name,
+      purpose: "password_reset",
+    });
 
     await createToken({ userId: user._id, type: "password_reset", tokenPlain: otp, meta: { email: user.email } });
 

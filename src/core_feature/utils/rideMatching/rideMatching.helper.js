@@ -6,6 +6,11 @@ export const TEN_KILOMETERS_IN_MILES = Number(
   (TEN_KILOMETERS_IN_METERS / 1609.344).toFixed(2)
 );
 export const DRIVER_DISPATCH_ELIGIBLE_STATUSES = ["active"];
+export const hasCompletedDriverRequirements = (driverProfile) =>
+  Boolean(
+    driverProfile?.documentsStatus === "verified" &&
+      Number(driverProfile?.requiredActionsCount || 0) === 0
+  );
 
 export const buildNearbyPointQuery = ({
   lng,
@@ -30,6 +35,8 @@ export const findNearbyAvailableDrivers = async ({
 } = {}) => {
   let query = DriverProfile.find({
     status: { $in: DRIVER_DISPATCH_ELIGIBLE_STATUSES },
+    documentsStatus: "verified",
+    requiredActionsCount: 0,
     isOnline: true,
     isBusy: false,
     activeVehicleId: { $ne: null },

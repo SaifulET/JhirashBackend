@@ -5,6 +5,11 @@ import { Vehicle } from "../../models/Vehicle/Vehicle.model.js";
 import { Trip } from "../../models/Trip/Trip.model.js";
 import { Rating } from "../../models/Rating/Rating.model.js";
 import { Report } from "../../models/Reports/Reports.model.js";
+import {
+  getVehicleReviewStatus,
+  normalizeReviewStatus,
+  syncDriverDocumentSummary,
+} from "../../driver/driver_documents/driver_documents.service.js";
 
 const DELETION_TIMELINE_DAYS = 30;
 
@@ -36,12 +41,7 @@ const ensureDriverUser = async (driverId) => {
   return user;
 };
 
-const normalizeDocumentStatus = (status) => {
-  if (status === "complete") return "approved";
-  if (status === "need_attention") return "rejected";
-  if (status === "submitted") return "in_review";
-  return status || "missing";
-};
+const normalizeDocumentStatus = normalizeReviewStatus;
 
 const mapDocumentBadgeStatus = (status) => {
   const normalizedStatus = normalizeDocumentStatus(status);
@@ -177,66 +177,7 @@ const mapTripDetail = ({ trip, rider, vehicle, riderReview, driverReview }) => (
     : null,
 });
 
-const refreshDriverReviewSummary = async (driverId) => {
-  const [documents, vehicle] = await Promise.all([
-    DriverDocument.find({
-      driverId,
-      type: {
-        $in: [
-          "profile_photo",
-          "driver_license_front",
-          "driver_license_back",
-          "vehicle_insurance",
-          "vehicle_registration",
-        ],
-      },
-    })
-      .select("type status")
-      .lean(),
-    Vehicle.findOne({ driverId, isActive: true }).lean(),
-  ]);
-
-  const statusByType = new Map(
-    documents.map((document) => [document.type, normalizeDocumentStatus(document.status)])
-  );
-  const requiredTypes = [
-    "profile_photo",
-    "driver_license_front",
-    "driver_license_back",
-    "vehicle_insurance",
-    "vehicle_registration",
-  ];
-
-  const missingCount = requiredTypes.filter((type) => !statusByType.has(type)).length;
-  const rejectedCount = requiredTypes.filter((type) => statusByType.get(type) === "rejected").length;
-  const pendingCount = requiredTypes.filter((type) => {
-    const status = statusByType.get(type);
-    return status === "in_review" || !status;
-  }).length;
-  const vehiclePending = vehicle && vehicle.approved ? 0 : 1;
-
-  const documentsStatus =
-    rejectedCount > 0
-      ? "denied"
-      : missingCount === 0 && pendingCount === 0 && vehiclePending === 0
-        ? "verified"
-        : "in_review";
-
-  return DriverProfile.findOneAndUpdate(
-    { userId: driverId },
-    {
-      $set: {
-        documentsStatus,
-        requiredActionsCount: missingCount + rejectedCount + pendingCount + vehiclePending,
-      },
-    },
-    {
-      new: true,
-      upsert: true,
-      setDefaultsOnInsert: true,
-    }
-  ).lean();
-};
+const refreshDriverReviewSummary = syncDriverDocumentSummary;
 
 export const driverManagementService = {
   async listDrivers(adminUserId, query = {}) {
@@ -400,7 +341,7 @@ export const driverManagementService = {
         mapDocumentCard({
           key: "vehicle_information",
           title: "Vehicle Information",
-          status: vehicle ? (vehicle.approved ? "approved" : "in_review") : "missing",
+          status: getVehicleReviewStatus(vehicle),
         }),
         mapDocumentCard({
           key: "vehicle_insurance",
@@ -469,7 +410,7 @@ export const driverManagementService = {
       return {
         type,
         title: "Vehicle Information",
-        status: vehicle.approved ? "verified" : "pending",
+        status: mapDocumentBadgeStatus(getVehicleReviewStatus(vehicle)),
         vehicle,
       };
     }
@@ -477,7 +418,6 @@ export const driverManagementService = {
     const docTypeMap = {
       vehicle_insurance: "vehicle_insurance",
       vehicle_registration: "vehicle_registration",
-      profile_photo: "profile_photo",
     };
 
     const docType = docTypeMap[type];
@@ -516,6 +456,9 @@ export const driverManagementService = {
     const statusMap = {
       pending: "in_review",
       in_review: "in_review",
+      complete: "approved",
+      completed: "approved",
+      need_attention: "rejected",
       verified: "approved",
       approved: "approved",
       denied: "rejected",
@@ -534,7 +477,15 @@ export const driverManagementService = {
     if (type === "vehicle_information") {
       const vehicle = await Vehicle.findOneAndUpdate(
         { driverId, isActive: true },
-        { $set: { approved: mappedStatus === "approved" } },
+        {
+          $set: {
+            approved: mappedStatus === "approved",
+            reviewStatus: mappedStatus,
+            rejectionReason: mappedStatus === "rejected" ? rejectionReason : null,
+            reviewedBy: adminUserId,
+            reviewedAt: new Date(),
+          },
+        },
         { new: true }
       ).lean();
 
@@ -546,7 +497,7 @@ export const driverManagementService = {
 
       return {
         type,
-        status: mappedStatus === "approved" ? "verified" : mappedStatus === "rejected" ? "denied" : "pending",
+        status: mapDocumentBadgeStatus(mappedStatus),
         vehicle,
         driverProfile: {
           status: driverProfile.status,

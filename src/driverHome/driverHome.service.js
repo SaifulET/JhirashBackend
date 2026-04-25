@@ -14,6 +14,7 @@ import { getStripeClientForEmail } from "../core_feature/utils/stripe/stripe.js"
 import {
   DRIVER_DISPATCH_ELIGIBLE_STATUSES,
   findNearbyAvailableDrivers,
+  hasCompletedDriverRequirements,
 } from "../core_feature/utils/rideMatching/rideMatching.helper.js";
 import { createSupportTicketForUser } from "../core_feature/utils/supportTicket/supportTicket.helper.js";
 import { emitToUser, emitToUsers } from "../messages/socketRealtime.helper.js";
@@ -26,6 +27,7 @@ import {
   RIDE_REQUEST_RADIUS_MILES,
 } from "./driverRideRequestQueue.helper.js";
 import bcrypt from "bcryptjs";
+import { syncDriverDocumentSummary } from "../driver/driver_documents/driver_documents.service.js";
 const ACTIVE_TRIP_STATUSES = ["accepted", "driver_arrived", "otp_verified", "started"];
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_YEAR = 365 * MS_PER_DAY;
@@ -92,7 +94,8 @@ const getActiveTripForDriver = async (userId) => {
 };
 
 const isDriverDispatchEligible = (profile) =>
-  DRIVER_DISPATCH_ELIGIBLE_STATUSES.includes(profile?.status);
+  DRIVER_DISPATCH_ELIGIBLE_STATUSES.includes(profile?.status) &&
+  hasCompletedDriverRequirements(profile);
 
 const emitDriverQueueSync = async (driverId, driverProfile, triggeredBy) => {
   if (
@@ -786,8 +789,9 @@ const attemptAutomaticTripCharge = async ({ trip, riderProfile, driverProfile })
 export const driverHomeService = {
   async getHome(userId) {
     const user = await getDriverUser(userId);
-    const profile = await getDriverProfileOrFail(userId);
-    await syncIneligibleDriverOfflineState(userId, profile);
+    await getDriverProfileOrFail(userId);
+    let profile = await syncDriverDocumentSummary(userId);
+    profile = await syncIneligibleDriverOfflineState(userId, profile);
 
     const [activeTrip, activeRideRequest] = await Promise.all([
       getActiveTripForDriver(userId),
@@ -814,6 +818,7 @@ export const driverHomeService = {
         tripsCount: profile.tripsCount,
         activeVehicleId: profile.activeVehicleId,
       },
+      requiredActionsCount: Number(profile.requiredActionsCount || 0),
       activeRideRequest,
       activeTrip,
     };
@@ -821,12 +826,21 @@ export const driverHomeService = {
 
   async goOnline(userId, payload) {
     await getDriverUser(userId);
-    const profile = await getDriverProfileOrFail(userId);
+    await getDriverProfileOrFail(userId);
+    const profile = await syncDriverDocumentSummary(userId);
     const hasIncomingLocation = payload?.lat !== undefined && payload?.lng !== undefined;
 
-    if (!isDriverDispatchEligible(profile)) {
+    if (!DRIVER_DISPATCH_ELIGIBLE_STATUSES.includes(profile?.status)) {
       await syncIneligibleDriverOfflineState(userId, profile);
       throw { status: 400, message: "Only active drivers can go online" };
+    }
+
+    if (!hasCompletedDriverRequirements(profile)) {
+      await syncIneligibleDriverOfflineState(userId, profile);
+      throw {
+        status: 400,
+        message: "Complete all required driver documents before going online",
+      };
     }
 
     if (!profile.activeVehicleId) {

@@ -4,6 +4,7 @@ import {
   RIDE_REQUEST_RADIUS_KM,
   RIDE_REQUEST_RADIUS_MILES,
 } from "../driverHome/driverRideRequestQueue.helper.js";
+import { hasCompletedDriverRequirements } from "../core_feature/utils/rideMatching/rideMatching.helper.js";
 
 const emitDriverQueue = async (socket, triggeredBy) => {
   if (socket.user.role !== "driver") {
@@ -12,7 +13,13 @@ const emitDriverQueue = async (socket, triggeredBy) => {
 
   const profile = await DriverProfile.findOne({ userId: socket.user.id }).lean();
 
-  if (!profile || !profile.isOnline || profile.isBusy || profile.status !== "active") {
+  if (
+    !profile ||
+    !profile.isOnline ||
+    profile.isBusy ||
+    profile.status !== "active" ||
+    !hasCompletedDriverRequirements(profile)
+  ) {
     socket.emit("ride-request:queue", {
       requests: [],
       radiusMiles: RIDE_REQUEST_RADIUS_MILES,

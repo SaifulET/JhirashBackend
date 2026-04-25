@@ -5,7 +5,7 @@ import { DriverProfile } from "../../models/Driver_profile/Driver_profile.model.
 import { Vehicle } from "../../models/Vehicle/Vehicle.model.js";
 import { DriverDocument } from "../../models/Driver_documents/Driver_documents.model.js";
 
-const REQUIRED_DOCUMENT_TYPES = [
+export const REQUIRED_DRIVER_DOCUMENT_TYPES = [
   "profile_photo",
   "driver_license_front",
   "driver_license_back",
@@ -13,12 +13,92 @@ const REQUIRED_DOCUMENT_TYPES = [
   "vehicle_registration",
 ];
 
-const normalizeDocumentStatus = (status) => {
+const REQUIRED_DRIVER_DOCUMENT_GROUPS = [
+  {
+    key: "profile_photo",
+    types: ["profile_photo"],
+    isPresenceOnly: true,
+  },
+  {
+    key: "driver_license",
+    types: ["driver_license_front", "driver_license_back"],
+  },
+  {
+    key: "vehicle_information",
+    types: [],
+    isVehicle: true,
+  },
+  {
+    key: "vehicle_insurance",
+    types: ["vehicle_insurance"],
+  },
+  {
+    key: "vehicle_registration",
+    types: ["vehicle_registration"],
+  },
+  {
+    key: "payment_information",
+    types: [],
+    isStripe: true,
+  },
+];
+
+export const normalizeReviewStatus = (status) => {
+  if (status === "completed") return "approved";
   if (status === "complete") return "approved";
   if (status === "need_attention") return "rejected";
   if (status === "submitted") return "in_review";
-  return status;
+  return status || "missing";
 };
+
+const mapClientReviewStatus = (status) => {
+  const normalizedStatus = normalizeReviewStatus(status);
+
+  if (normalizedStatus === "approved") return "completed";
+  if (normalizedStatus === "in_review") return "in_review";
+  return "need_attention";
+};
+
+export const getVehicleReviewStatus = (vehicle) => {
+  if (!vehicle) {
+    return "missing";
+  }
+
+  if (vehicle.approved) {
+    return "approved";
+  }
+
+  const normalizedReviewStatus = normalizeReviewStatus(vehicle.reviewStatus);
+  if (normalizedReviewStatus !== "missing") {
+    return normalizedReviewStatus;
+  }
+
+  return "in_review";
+};
+
+const getCombinedDocumentStatus = (statuses = []) => {
+  const normalizedStatuses = statuses.map((status) => normalizeReviewStatus(status));
+
+  if (normalizedStatuses.length === 0 || normalizedStatuses.includes("missing")) {
+    return "missing";
+  }
+
+  if (normalizedStatuses.includes("rejected")) {
+    return "rejected";
+  }
+
+  if (normalizedStatuses.every((status) => status === "approved")) {
+    return "approved";
+  }
+
+  if (normalizedStatuses.includes("in_review") || normalizedStatuses.includes("approved")) {
+    return "in_review";
+  }
+
+  return "missing";
+};
+
+const getPresenceOnlyStatus = (value) => (value ? "approved" : "missing");
 
 const getDriverUser = async (userId) => {
   const user = await User.findById(userId)
@@ -81,35 +161,37 @@ const upsertDocument = async ({ driverId, type, fileUrl }) => {
 };
 
 const buildStepStatus = ({ vehicle, documents, stripeConnected }) => {
-  const docMap = Object.fromEntries(documents.map(d => [d.type, d.status]));
+  const docMap = Object.fromEntries(
+    documents.map((document) => [document.type, normalizeReviewStatus(document.status)])
+  );
 
-  const getDocStatus = (type) => {
-    const status = docMap[type];
-
-    if (status === "approved") return "completed";
-    if (status === "submitted") return "inreview";
-    return "need_attention";
-  };
-
-  const getSimpleStatus = (value) => {
-    return value ? "completed" : "need_attention";
-  };
+  const getDocStatus = (type) => mapClientReviewStatus(docMap[type]);
+  const getPresenceOnlyStepStatus = (type) =>
+    mapClientReviewStatus(getPresenceOnlyStatus(Boolean(docMap[type])));
+  const getLicenseStatus = () =>
+    mapClientReviewStatus(
+      getCombinedDocumentStatus([
+        docMap.driver_license_front || "missing",
+        docMap.driver_license_back || "missing",
+      ])
+    );
+  const getSimpleStatus = (value) => (value ? "completed" : "need_attention");
 
   return [
     {
       key: "vehicle",
       title: "Vehicle Information",
-      status: getSimpleStatus(vehicle),
+      status: mapClientReviewStatus(getVehicleReviewStatus(vehicle)),
     },
     {
       key: "profile_photo",
       title: "Profile Photo",
-      status: getDocStatus("profile_photo"),
+      status: getPresenceOnlyStepStatus("profile_photo"),
     },
     {
       key: "driver_license_front",
-      title: "Driver License Front",
-      status: getDocStatus("driver_license_front"),
+      title: "Driver License",
+      status: getLicenseStatus(),
     },
     {
       key: "vehicle_registration",
@@ -129,63 +211,72 @@ const buildStepStatus = ({ vehicle, documents, stripeConnected }) => {
   ];
 };
 
-const updateDriverProfileSummary = async (userId) => {
-  const docs = await DriverDocument.find(
-    { driverId: userId },
-    { type: 1, status: 1, _id: 0 }
-  ).lean();
+const getRequiredReviewItems = async (userId) => {
+  const [documents, vehicle, driverProfile] = await Promise.all([
+    DriverDocument.find(
+      { driverId: userId, type: { $in: REQUIRED_DRIVER_DOCUMENT_TYPES } },
+      { type: 1, status: 1, _id: 0 }
+    ).lean(),
+    Vehicle.findOne({ driverId: userId, isActive: true }, { approved: 1, reviewStatus: 1 }).lean(),
+    DriverProfile.findOne({ userId }, { stripeConnected: 1 }).lean(),
+  ]);
 
-  let hasRejected = false;
-  let hasInReview = false;
+  const documentStatusByType = new Map(
+    documents.map((document) => [document.type, normalizeReviewStatus(document.status)])
+  );
 
-  let missingDocsCount = 0;
-  let rejectedDocsCount = 0;
-  let pendingDocsCount = 0;
-
-  const approvedTypes = new Set();
-  const existingTypes = new Set();
-
-  for (const doc of docs) {
-    const normalizedStatus = normalizeDocumentStatus(doc.status);
-    existingTypes.add(doc.type);
-
-    if (normalizedStatus === "approved") {
-      approvedTypes.add(doc.type);
-    } else if (normalizedStatus === "rejected") {
-      hasRejected = true;
-      rejectedDocsCount++;
-    } else if (normalizedStatus === "in_review") {
-      hasInReview = true;
-      pendingDocsCount++;
+  const requiredItems = REQUIRED_DRIVER_DOCUMENT_GROUPS.map((group) => {
+    if (group.isVehicle) {
+      return {
+        key: group.key,
+        status: getVehicleReviewStatus(vehicle),
+      };
     }
-  }
 
-  for (const type of REQUIRED_DOCUMENT_TYPES) {
-    if (!existingTypes.has(type)) {
-      missingDocsCount++;
+    if (group.isStripe) {
+      return {
+        key: group.key,
+        status: getPresenceOnlyStatus(Boolean(driverProfile?.stripeConnected)),
+      };
     }
-  }
+
+    if (group.isPresenceOnly) {
+      return {
+        key: group.key,
+        status: getPresenceOnlyStatus(Boolean(documentStatusByType.get(group.key))),
+      };
+    }
+
+    return {
+      key: group.key,
+      status: getCombinedDocumentStatus(
+        group.types.map((type) => documentStatusByType.get(type) || "missing")
+      ),
+    };
+  });
+
+  return requiredItems;
+};
+
+export const syncDriverDocumentSummary = async (userId) => {
+  const requiredItems = await getRequiredReviewItems(userId);
+  const statuses = requiredItems.map((item) => item.status);
+  const hasRejected = statuses.includes("rejected");
+  const hasApproved = statuses.includes("approved");
+  const hasInReview = statuses.includes("in_review");
+  const allApproved = statuses.every((status) => status === "approved");
 
   let documentsStatus = "pending";
 
-  if (docs.length === 0) {
-    documentsStatus = "pending";
-  } else if (hasRejected) {
+  if (hasRejected) {
     documentsStatus = "denied";
-  } else {
-    const allRequiredApproved = REQUIRED_DOCUMENT_TYPES.every((type) =>
-      approvedTypes.has(type)
-    );
-
-    if (allRequiredApproved) {
-      documentsStatus = "verified";
-    } else if (hasInReview) {
-      documentsStatus = "in_review";
-    }
+  } else if (allApproved) {
+    documentsStatus = "verified";
+  } else if (hasInReview || hasApproved) {
+    documentsStatus = "in_review";
   }
 
-  const requiredActionsCount =
-    missingDocsCount + rejectedDocsCount + pendingDocsCount;
+  const requiredActionsCount = requiredItems.filter((item) => item.status !== "approved").length;
 
   return DriverProfile.findOneAndUpdate(
     { userId },
@@ -218,14 +309,11 @@ async  getStatus(userId) {
     
 
   const vehiclePromise = Vehicle.findOne({ driverId: userId, isActive: true })
-    .select("_id")
+    .select("_id approved reviewStatus")
     .lean();
 
   const documentsPromise = DriverDocument.find(
-    {
-      driverId: userId,
-      type: { $ne: "driver_license_back" }, // skip at DB level
-    },
+    { driverId: userId },
     {
       type: 1,
       status: 1,
@@ -254,9 +342,9 @@ async  getStatus(userId) {
     stripeConnected: !!driverProfile?.stripeConnected,
     user,
   });
-  console.log(steps);
+  await syncDriverDocumentSummary(userId);
 
-  return steps
+  return steps;
     // .filter(
     //   (step) =>
     //     step.key !== "basic_profile" &&
@@ -301,10 +389,16 @@ async  getStatus(userId) {
         seats,
         licensePlate,
         isActive: true,
+        approved: false,
+        reviewStatus: "submitted",
+        rejectionReason: null,
+        reviewedBy: null,
+        reviewedAt: null,
       },
       $setOnInsert: {
         driverId: userId,
         approved: false,
+        reviewStatus: "submitted",
       },
     },
     {
@@ -330,6 +424,8 @@ async  getStatus(userId) {
     }
   );
 
+  await syncDriverDocumentSummary(userId);
+
   return {
     message: "Vehicle information saved successfully",
     vehicle,
@@ -353,7 +449,7 @@ async  getStatus(userId) {
     ),
   ]);
 
-  await updateDriverProfileSummary(userId);
+  await syncDriverDocumentSummary(userId);
 
   return {
     message: "Profile photo uploaded successfully",
@@ -371,7 +467,7 @@ async  getStatus(userId) {
   });
 
   // update summary after upload
-  await updateDriverProfileSummary(userId);
+  await syncDriverDocumentSummary(userId);
 
   return {
     message: "Driver license front uploaded successfully",
@@ -388,7 +484,7 @@ async  getStatus(userId) {
     fileUrl,
   });
 
-  await updateDriverProfileSummary(userId);
+  await syncDriverDocumentSummary(userId);
 
   return {
     message: "Driver license back uploaded successfully",
@@ -405,7 +501,7 @@ async  getStatus(userId) {
     fileUrl,
   });
 
-  await updateDriverProfileSummary(userId);
+  await syncDriverDocumentSummary(userId);
 
   return {
     message: "Vehicle registration uploaded successfully",
@@ -422,7 +518,7 @@ async  getStatus(userId) {
     fileUrl,
   });
 
-  await updateDriverProfileSummary(userId);
+  await syncDriverDocumentSummary(userId);
 
   return {
     message: "Vehicle insurance uploaded successfully",
@@ -459,27 +555,22 @@ async  getStatus(userId) {
     const user = await getDriverUser(userId);
     const driverProfile = await getOrCreateDriverProfile(userId);
     const vehicle = await Vehicle.findOne({ driverId: userId, isActive: true }).lean();
-    const documents = await DriverDocument.find({ driverId: userId }).lean();
+    const requiredItems = await getRequiredReviewItems(userId);
 
-    const docMap = {};
-    for (const doc of documents) {
-      docMap[doc.type] = normalizeDocumentStatus(doc.status);
-    }
-
-    const missingDocuments = REQUIRED_DOCUMENT_TYPES.filter((type) => !docMap[type]);
-    const rejectedDocuments = REQUIRED_DOCUMENT_TYPES.filter((type) => docMap[type] === "rejected");
-    const pendingDocuments = REQUIRED_DOCUMENT_TYPES.filter(
-      (type) => docMap[type] === "submitted" || docMap[type] === "in_review"
-    );
+    const missingDocuments = requiredItems
+      .filter((item) => item.status === "missing")
+      .map((item) => item.key);
+    const rejectedDocuments = requiredItems
+      .filter((item) => item.status === "rejected")
+      .map((item) => item.key);
+    const pendingDocuments = requiredItems
+      .filter((item) => item.status === "in_review")
+      .map((item) => item.key);
 
     const issues = [];
 
     if (!user.name || (!user.email && !user.phone)) {
       issues.push("Basic profile is incomplete");
-    }
-
-    if (!vehicle) {
-      issues.push("Vehicle information is missing");
     }
 
     if (!driverProfile.stripeConnected) {
@@ -494,23 +585,18 @@ async  getStatus(userId) {
       issues.push("Some documents were rejected");
     }
 
+    const vehicleStatus = getVehicleReviewStatus(vehicle);
+    if (vehicleStatus === "missing") {
+      issues.push("Vehicle information is missing");
+    } else if (vehicleStatus === "rejected") {
+      issues.push("Vehicle information needs attention");
+    }
+
+    const syncedProfile = await syncDriverDocumentSummary(userId);
     const eligible =
       Boolean(vehicle) &&
       driverProfile.stripeConnected &&
-      missingDocuments.length === 0 &&
-      rejectedDocuments.length === 0;
-
-    if (eligible && pendingDocuments.length === 0) {
-      driverProfile.documentsStatus = "verified";
-    } else {
-      driverProfile.documentsStatus =
-        rejectedDocuments.length > 0 ? "denied" : "in_review";
-    }
-
-    driverProfile.requiredActionsCount =
-      issues.length + pendingDocuments.length;
-
-    await driverProfile.save();
+      syncedProfile.documentsStatus === "verified";
 
     return {
       eligible,
@@ -518,22 +604,29 @@ async  getStatus(userId) {
       missingDocuments,
       rejectedDocuments,
       pendingDocuments,
-      driverStatus: driverProfile.status,
-      documentsStatus: driverProfile.documentsStatus,
-      requiredActionsCount: driverProfile.requiredActionsCount,
+      driverStatus: syncedProfile.status,
+      documentsStatus: syncedProfile.documentsStatus,
+      requiredActionsCount: syncedProfile.requiredActionsCount,
     };
   },
 
 
 
   async updateStatus({ adminUserId, driverId, type, status, rejectionReason }) {
-  const allowedDocStatuses = new Set(["in_review", "approved", "rejected", "complete", "need_attention"]);
+  const allowedDocStatuses = new Set([
+    "in_review",
+    "approved",
+    "rejected",
+    "complete",
+    "completed",
+    "need_attention",
+  ]);
 
   if (!allowedDocStatuses.has(status)) {
     throw { status: 400, message: "Invalid status value" };
   }
 
-  const nextStatus = normalizeDocumentStatus(status);
+  const nextStatus = normalizeReviewStatus(status);
 
   const document = await DriverDocument.findOneAndUpdate(
     { driverId, type },
@@ -552,7 +645,7 @@ async  getStatus(userId) {
     throw { status: 404, message: "Document not found" };
   }
 
-  const driverProfile = await updateDriverProfileSummary(driverId);
+  const driverProfile = await syncDriverDocumentSummary(driverId);
 
   return {
     document,

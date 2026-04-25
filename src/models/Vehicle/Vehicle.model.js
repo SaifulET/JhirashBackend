@@ -55,6 +55,32 @@ const VehicleSchema = new Schema(
       type: Boolean,
       default: false,
     },
+    reviewStatus: {
+      type: String,
+      enum: [
+        "submitted",
+        "in_review",
+        "approved",
+        "rejected",
+        "complete",
+        "need_attention",
+      ],
+      default: "submitted",
+    },
+    rejectionReason: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    reviewedBy: {
+      type: Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    reviewedAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
