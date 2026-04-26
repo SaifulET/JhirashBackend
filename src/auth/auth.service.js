@@ -6,7 +6,10 @@ import mongoose from "mongoose";
 import { OAuth2Client } from "google-auth-library";
 import { User } from "../models/User/User.model.js";
 import { AuthToken } from "../models/Auth_token/Auth_token.model.js";
+import { DriverProfile } from "../models/Driver_profile/Driver_profile.model.js";
+import { DriverDocument } from "../models/Driver_documents/Driver_documents.model.js";
 import { sendEmail } from "../core_feature/utils/mailerSender/mailer.js";
+import { syncDriverDocumentSummary } from "../driver/driver_documents/driver_documents.service.js";
 
 const RefreshToken = mongoose.models.RefreshToken; // optional
 
@@ -528,14 +531,61 @@ export const authService = {
 
 
 
-  async imageSave({userId,image}){
-     const updatedData = await User.findByIdAndUpdate(
-    userId,
-    { profileImage: image },
-    { new: true }
-  );
+  async imageSave({ userId, image }) {
+    const updatedData = await User.findByIdAndUpdate(
+      userId,
+      { $set: { profileImage: image } },
+      { new: true }
+    );
 
-  return updatedData;
+    if (!updatedData) {
+      throw { status: 404, message: "User not found" };
+    }
+
+    if (updatedData.role === "driver" && image) {
+      await Promise.all([
+        DriverDocument.findOneAndUpdate(
+          { driverId: userId, type: "profile_photo" },
+          {
+            $set: {
+              fileUrl: image,
+              status: "complete",
+              rejectionReason: null,
+              reviewedBy: null,
+              reviewedAt: null,
+            },
+          },
+          {
+            new: true,
+            upsert: true,
+            setDefaultsOnInsert: true,
+          }
+        ),
+        DriverProfile.findOneAndUpdate(
+          { userId },
+          {
+            $setOnInsert: {
+              userId,
+              status: "pending",
+              isOnline: false,
+              isBusy: false,
+              documentsStatus: "pending",
+              requiredActionsCount: 0,
+              stripeConnected: false,
+            },
+          },
+          {
+            new: true,
+            upsert: true,
+            setDefaultsOnInsert: true,
+          }
+        ),
+      ]);
+
+      await syncDriverDocumentSummary(userId);
+    }
+
+    return updatedData;
   },
   async editProfile(id,updateData){
 const updatedDoc = await User.findByIdAndUpdate(

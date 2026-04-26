@@ -397,8 +397,6 @@ async  getStatus(userId) {
       },
       $setOnInsert: {
         driverId: userId,
-        approved: false,
-        reviewStatus: "submitted",
       },
     },
     {

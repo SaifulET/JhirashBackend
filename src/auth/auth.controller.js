@@ -176,7 +176,7 @@ export const authController = {
       const out = await authService.imageSave({ userId: req.auth.userId ,image});
       return res.json({ success: true, data: out });
     } catch (error) {
-      return handleError(res, e);
+      return handleError(res, error);
     }
   },
   
