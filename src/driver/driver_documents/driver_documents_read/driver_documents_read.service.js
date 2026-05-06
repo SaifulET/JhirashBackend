@@ -157,6 +157,7 @@ async getSummary(userId) {
         model: 1,
         year: 1,
         type: 1,
+        tier: 1,
         priceRange: 1,
         size: 1,
         seats: 1,

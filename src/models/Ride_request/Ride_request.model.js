@@ -13,23 +13,27 @@ const RideRequestSchema = new Schema(
       pickupAt: { type: Date },
     },
 
-   preference: {
-  vehicleType: {
-    type: String,
-    enum: ["any", "car", "suv", "van"],
-    default: "any",
-  },
-  tier: {
-    type: String,
-    enum: ["any", "regular", "premium"],
-    default: "any",
-  },
-  size: {
-    type: String,
-    enum: ["any", "compact", "normal", "full"],
-    default: "any",
-  },
-},
+    preference: {
+      vehicleType: {
+        type: String,
+        enum: ["any", "car", "suv", "van"],
+        default: "any",
+      },
+      tier: {
+        type: String,
+        enum: ["any", "regular", "premium"],
+        default: "any",
+      },
+      seats: {
+        type: Number,
+        default: null,
+        min: 1,
+      },
+      size: {
+        type: String,
+        enum: ["compact", "normal", "full"],
+      },
+    },
 
     status: { type: String, enum: ["searching", "matched", "expired", "cancelled"], default: "searching", index: true },
 

@@ -62,20 +62,25 @@ const TripSchema = new Schema(
       enum: ["unpaid", "authorized", "paid", "failed", "refunded", "partial"],
       default: "unpaid",
       index: true,
-    },rideOption: {
-  vehicleType: {
-    type: String,
-    enum: ["car", "suv", "van"],
-  },
-  tier: {
-    type: String,
-    enum: ["regular", "premium"],
-  },
-  size: {
-    type: String,
-    enum: ["compact", "normal", "full"],
-  },
-},
+    },
+    rideOption: {
+      vehicleType: {
+        type: String,
+        enum: ["car", "suv", "van"],
+      },
+      tier: {
+        type: String,
+        enum: ["regular", "premium"],
+      },
+      seats: {
+        type: Number,
+        min: 1,
+      },
+      size: {
+        type: String,
+        enum: ["compact", "normal", "full"],
+      },
+    },
 
     cancellation: {
       canceledBy: { type: String, enum: ["rider", "driver", "system", "admin"] },

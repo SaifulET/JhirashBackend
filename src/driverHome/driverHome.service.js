@@ -1062,7 +1062,14 @@ export const driverHomeService = {
             rideOption: {
               vehicleType: rideRequest.preference?.vehicleType,
               tier: rideRequest.preference?.tier,
-              size: rideRequest.preference?.size,
+              seats: rideRequest.preference?.seats,
+              size:
+                rideRequest.preference?.size ||
+                (rideRequest.preference?.vehicleType === "car"
+                  ? "normal"
+                  : Number(rideRequest.preference?.seats || 0) <= 5
+                    ? "compact"
+                    : "full"),
             },
           },
         ],

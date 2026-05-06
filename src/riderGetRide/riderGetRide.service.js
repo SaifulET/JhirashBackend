@@ -307,6 +307,43 @@ const buildRideLocationPayload = (location = {}, fieldName = "location") => {
   };
 };
 
+const getDefaultSeatsForVehicleType = (vehicleType = "car") => {
+  if (vehicleType === "suv") {
+    return 5;
+  }
+
+  if (vehicleType === "van") {
+    return 7;
+  }
+
+  return 4;
+};
+
+const getSizeFromVehiclePreference = ({ vehicleType = "car", seats } = {}) => {
+  if (vehicleType === "car") {
+    return "normal";
+  }
+
+  return Number(seats || 0) <= 5 ? "compact" : "full";
+};
+
+const normalizeRidePreference = (preference = {}) => {
+  const vehicleType = preference?.vehicleType || "car";
+  const tier = preference?.tier || "regular";
+  const parsedSeats = Number(preference?.seats);
+  const seats =
+    Number.isFinite(parsedSeats) && parsedSeats > 0
+      ? parsedSeats
+      : getDefaultSeatsForVehicleType(vehicleType);
+
+  return {
+    vehicleType,
+    tier,
+    seats,
+    size: getSizeFromVehiclePreference({ vehicleType, seats }),
+  };
+};
+
 const toUniqueStringIds = (items = []) =>
   [...new Set(items.filter(Boolean).map((item) => String(item)))];
 
@@ -338,11 +375,18 @@ const getCurrentRequestOrTrip = async (userId) => {
   return { activeRequest, activeTrip };
 };
 
-const findNearbyDriversForPickup = async ({ lng, lat }) => {
+const findNearbyDriversForPickup = async ({ lng, lat, preference = null }) => {
   const nearbyProfiles = await findNearbyAvailableDrivers({
     lng,
     lat,
     populate: true,
+    vehicleFilters: preference
+      ? {
+          vehicleType: preference.vehicleType,
+          tier: preference.tier,
+          seats: preference.seats,
+        }
+      : null,
   });
 
   return nearbyProfiles
@@ -360,7 +404,9 @@ const findNearbyDriversForPickup = async ({ lng, lat }) => {
             brand: profile.activeVehicleId.brand,
             model: profile.activeVehicleId.model,
             type: profile.activeVehicleId.type,
+            tier: profile.activeVehicleId.tier || "regular",
             size: profile.activeVehicleId.size,
+            seats: Number(profile.activeVehicleId.seats || 0),
             licensePlate: profile.activeVehicleId.licensePlate || null,
           }
         : null,
@@ -760,11 +806,7 @@ export const riderGetRideService = {
 
     const config = await getActiveFareConfig();
 
-    const finalPreference = {
-      vehicleType: preference?.vehicleType || "car",
-      tier: preference?.tier || "regular",
-      size: preference?.size || "normal",
-    };
+    const finalPreference = normalizeRidePreference(preference);
 
     const quote = calculateEstimate({
       config,
@@ -778,6 +820,7 @@ export const riderGetRideService = {
     const nearbyDrivers = await findNearbyDriversForPickup({
       lng: pickup.lng,
       lat: pickup.lat,
+      preference: finalPreference,
     });
 
     const expiresAt = new Date(Date.now() + RIDE_REQUEST_EXPIRY_MS);
@@ -1022,7 +1065,7 @@ export const riderGetRideService = {
     }
 
     const config = await getActiveFareConfig();
-    const preference = rideRequest.preference || {};
+    const normalizedPreference = normalizeRidePreference(rideRequest.preference || {});
     const shouldUpdatePickup = Boolean(payload?.pickup);
     const shouldUpdateDropoff = Boolean(payload?.dropoff);
 
@@ -1033,14 +1076,15 @@ export const riderGetRideService = {
         ? await findNearbyDriversForPickup({
             lng: rideRequest.pickup.point.coordinates[0],
             lat: rideRequest.pickup.point.coordinates[1],
+            preference: normalizedPreference,
           })
         : [];
 
     const newQuote = calculateEstimate({
       config,
-      vehicleType: preference.vehicleType || "car",
-      tier: preference.tier || "regular",
-      size: preference.size || "normal",
+      vehicleType: normalizedPreference.vehicleType,
+      tier: normalizedPreference.tier,
+      size: normalizedPreference.size,
       estimatedMiles: payload?.estimatedMiles ?? rideRequest.quote?.estimatedMiles ?? 0,
       estimatedMinutes: payload?.estimatedMinutes ?? rideRequest.quote?.estimatedMinutes ?? 0,
     });
@@ -1067,6 +1111,7 @@ export const riderGetRideService = {
         ? await findNearbyDriversForPickup({
             lng: rideRequest.pickup.point.coordinates[0],
             lat: rideRequest.pickup.point.coordinates[1],
+            preference: normalizedPreference,
           })
         : [];
 
@@ -1138,12 +1183,12 @@ export const riderGetRideService = {
     }
 
     const config = await getActiveFareConfig();
-    const preference = rideRequest.preference || {};
+    const normalizedPreference = normalizeRidePreference(rideRequest.preference || {});
     const checkedQuote = calculateEstimate({
       config,
-      vehicleType: preference.vehicleType || "car",
-      tier: preference.tier || "regular",
-      size: preference.size || "normal",
+      vehicleType: normalizedPreference.vehicleType,
+      tier: normalizedPreference.tier,
+      size: normalizedPreference.size,
       estimatedMiles: payload?.estimatedMiles ?? rideRequest.quote?.estimatedMiles ?? 0,
       estimatedMinutes: payload?.estimatedMinutes ?? rideRequest.quote?.estimatedMinutes ?? 0,
     });

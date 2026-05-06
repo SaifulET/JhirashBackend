@@ -100,6 +100,61 @@ const getCombinedDocumentStatus = (statuses = []) => {
 
 const getPresenceOnlyStatus = (value) => (value ? "approved" : "missing");
 
+const getDefaultSeatsForVehicleType = (vehicleType = "car") => {
+  if (vehicleType === "suv") {
+    return 5;
+  }
+
+  if (vehicleType === "van") {
+    return 7;
+  }
+
+  return 4;
+};
+
+const getSizeFromVehiclePreference = ({ vehicleType = "car", seats } = {}) => {
+  if (vehicleType === "car") {
+    return "normal";
+  }
+
+  return Number(seats || 0) <= 5 ? "compact" : "full";
+};
+
+const normalizeVehiclePayload = (payload = {}) => {
+  const brand = String(payload.brand || "").trim();
+  const model = String(payload.model || "").trim();
+  const type = String(payload.type || "").trim().toLowerCase();
+  const tier = String(payload.tier || "regular").trim().toLowerCase();
+  const licensePlate = String(payload.licensePlate || "").trim();
+
+  const parsedYear = Number(payload.year);
+  const year = Number.isInteger(parsedYear) ? parsedYear : undefined;
+
+  const parsedSeats = Number(payload.seats);
+  const seats =
+    Number.isFinite(parsedSeats) && parsedSeats > 0
+      ? parsedSeats
+      : getDefaultSeatsForVehicleType(type || "car");
+
+  if (!brand || !model || !type || !licensePlate) {
+    throw {
+      status: 400,
+      message: "brand, model, type and licensePlate are required",
+    };
+  }
+
+  return {
+    brand,
+    model,
+    year,
+    type,
+    tier,
+    seats,
+    licensePlate,
+    size: getSizeFromVehiclePreference({ vehicleType: type, seats }),
+  };
+};
+
 const getDriverUser = async (userId) => {
   const user = await User.findById(userId)
     .select("_id role isDeleted")
@@ -370,11 +425,11 @@ async  getStatus(userId) {
     model,
     year,
     type,
-    priceRange,
-    size,
+    tier,
     seats,
     licensePlate,
-  } = payload;
+    size,
+  } = normalizeVehiclePayload(payload);
 
   const vehicle = await Vehicle.findOneAndUpdate(
     { driverId: userId, isActive: true },
@@ -384,7 +439,7 @@ async  getStatus(userId) {
         model,
         year,
         type,
-        priceRange,
+        tier,
         size,
         seats,
         licensePlate,

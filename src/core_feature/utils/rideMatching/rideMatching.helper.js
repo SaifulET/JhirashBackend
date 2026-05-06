@@ -32,7 +32,18 @@ export const findNearbyAvailableDrivers = async ({
   maxDistance = TEN_KILOMETERS_IN_METERS,
   populate = false,
   lean = true,
+  vehicleFilters = null,
 } = {}) => {
+  const vehicleMatch = vehicleFilters
+    ? {
+        ...(vehicleFilters.vehicleType ? { type: vehicleFilters.vehicleType } : {}),
+        ...(vehicleFilters.tier ? { tier: vehicleFilters.tier } : {}),
+        ...(Number.isFinite(Number(vehicleFilters.seats))
+          ? { seats: { $gte: Number(vehicleFilters.seats) } }
+          : {}),
+      }
+    : null;
+
   let query = DriverProfile.find({
     status: { $in: DRIVER_DISPATCH_ELIGIBLE_STATUSES },
     documentsStatus: "verified",
@@ -47,12 +58,22 @@ export const findNearbyAvailableDrivers = async ({
   if (populate) {
     query = query
       .populate("userId", "name profileImage ratingAvg ratingCount")
-      .populate("activeVehicleId", "brand model type size licensePlate");
+      .populate({
+        path: "activeVehicleId",
+        select: "brand model type tier size seats licensePlate",
+        ...(vehicleMatch ? { match: vehicleMatch } : {}),
+      });
   }
 
   if (lean) {
     query = query.lean();
   }
 
-  return await query;
+  const profiles = await query;
+
+  if (!vehicleFilters) {
+    return profiles;
+  }
+
+  return profiles.filter((profile) => Boolean(profile?.activeVehicleId));
 };
