@@ -650,6 +650,7 @@ async  getStatus(userId) {
     account = await stripeClient.accounts.create({
       type: "express",
       country: process.env.STRIPE_CONNECT_COUNTRY || "US",
+      business_type: "individual",
       email: driver.email || undefined,
       capabilities: {
         transfers: { requested: true },
