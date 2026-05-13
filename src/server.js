@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 dotenv.config();
 import cors from "cors";
 import cookieParser from "cookie-parser";
+import dns from "dns";
 import mongoose from "mongoose";
 import http from "http";
 import { LegalContent } from "./models/Legal_content/Legal_content.model.js";
@@ -51,6 +52,19 @@ app.get("/health", (req, res) => {
   });
 });
 
+const getStripeConnectRedirectTarget = (req) => {
+  const redirect = String(req.query.redirect || "").trim();
+  return redirect || process.env.FRONTEND_URL || "/";
+};
+
+app.get("/stripe/connect/return", (req, res) => {
+  return res.redirect(getStripeConnectRedirectTarget(req));
+});
+
+app.get("/stripe/connect/refresh", (req, res) => {
+  return res.redirect(getStripeConnectRedirectTarget(req));
+});
+
 app.use("/auth", UserRouter);
 app.use("/driverOnboarding", routdriverOnboardingRoute);
 app.use("/driverOnboardingRead", driverOnboardingReadRoutes);
@@ -76,6 +90,28 @@ initSocket(server);
 const HOST = "0.0.0.0";
 const PORT = Number(process.env.PORT) || 5001;
 
+function configureDnsForMongoSrv() {
+  if (!process.env.MONGO_URI?.startsWith("mongodb+srv://")) {
+    return;
+  }
+
+  const currentServers = dns.getServers();
+  const usesLocalDns = currentServers.every((server) =>
+    ["127.0.0.1", "::1"].includes(server)
+  );
+
+  if (!usesLocalDns) {
+    return;
+  }
+
+  const fallbackServers = (process.env.DNS_SERVERS || "8.8.8.8,1.1.1.1")
+    .split(",")
+    .map((server) => server.trim())
+    .filter(Boolean);
+
+  dns.setServers(fallbackServers);
+}
+
 server.on("error", (error) => {
   if (error.code === "EADDRINUSE") {
     console.error(
@@ -92,6 +128,8 @@ async function startServer() {
   if (!process.env.MONGO_URI) {
     throw new Error("MONGO_URI is not configured");
   }
+
+  configureDnsForMongoSrv();
 
   await mongoose.connect(process.env.MONGO_URI, {
     serverSelectionTimeoutMS: 10000,

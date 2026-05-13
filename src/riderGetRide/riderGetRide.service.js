@@ -25,7 +25,11 @@ const ACTIVE_REQUEST_STATUSES = ["searching", "matched"];
 const RIDE_REQUEST_EXPIRY_MS = 5 * 60 * 1000;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_YEAR = 365 * MS_PER_DAY;
+const ADMIN_FEE_PERCENT = 20;
 
+const toStripeAmount = (amount) => {
+  return Math.max(0, Math.round(Number(amount || 0) * 100));
+};
 
 
 const mapDocument = (doc) => {
@@ -504,9 +508,11 @@ const getCompletedTripForPayment = async (userId, tripId) => {
 
 const buildTripPaymentAmounts = (trip) => {
   const totalFare = Number(trip?.pricing?.finalFare || trip?.pricing?.estimatedFare || 0);
-  const driverSharePercent = Number(trip?.pricing?.driverSharePercent ?? 0);
-  const driverGets = Number(((totalFare * driverSharePercent) / 100).toFixed(2));
-  const platformGets = Number((totalFare - driverGets).toFixed(2));
+  const fareCents = toStripeAmount(totalFare);
+  const adminAmount = Math.round((fareCents * ADMIN_FEE_PERCENT) / 100);
+  const driverAmount = fareCents - adminAmount;
+  const driverGets = Number((driverAmount / 100).toFixed(2));
+  const platformGets = Number((adminAmount / 100).toFixed(2));
 
   return {
     totalFare,
@@ -1653,8 +1659,12 @@ export const riderGetRideService = {
       }
     }
 
-    const paymentIntent = await stripeClient.paymentIntents.create({
-      amount: Math.round(Number(payment.totalFare) * 100),
+    const driverProfile = await DriverProfile.findOne(
+      { userId: trip.driverId },
+      { stripeAccountId: 1, stripeConnected: 1 }
+    ).lean();
+    const paymentIntentPayload = {
+      amount: toStripeAmount(payment.totalFare),
       currency: String(payment.currency || "USD").toLowerCase(),
       customer: stripeCustomerId,
       payment_method_types: ["card"],
@@ -1663,8 +1673,19 @@ export const riderGetRideService = {
         tripId: String(trip._id),
         riderId: String(userId),
         driverId: String(trip.driverId),
+        driverAmount: String(toStripeAmount(payment.driverGets)),
+        adminAmount: String(toStripeAmount(payment.platformGets)),
       },
-    });
+    };
+
+    if (driverProfile?.stripeConnected && driverProfile?.stripeAccountId) {
+      paymentIntentPayload.transfer_data = {
+        destination: driverProfile.stripeAccountId,
+      };
+      paymentIntentPayload.application_fee_amount = toStripeAmount(payment.platformGets);
+    }
+
+    const paymentIntent = await stripeClient.paymentIntents.create(paymentIntentPayload);
 
     await upsertTripPaymentRecord(trip, {
       stripeCustomerId,

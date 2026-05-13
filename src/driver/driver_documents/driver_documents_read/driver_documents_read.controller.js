@@ -95,6 +95,20 @@ export const driverOnboardingReadController = {
     }
   },
 
+  async getStripeApproval(req, res) {
+    try {
+      const result = await driverOnboardingReadService.getStripeApproval(req.auth.userId);
+
+      return res.status(200).json({
+        success: true,
+        message: "Stripe approval status fetched successfully",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
   async getVehicleInfo(req, res) {
     try {
       const result = await driverOnboardingReadService.getVehicleInfo(req.auth.userId);

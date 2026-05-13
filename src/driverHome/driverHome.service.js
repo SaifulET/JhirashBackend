@@ -31,6 +31,7 @@ import { syncDriverDocumentSummary } from "../driver/driver_documents/driver_doc
 const ACTIVE_TRIP_STATUSES = ["accepted", "driver_arrived", "otp_verified", "started"];
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_YEAR = 365 * MS_PER_DAY;
+const ADMIN_FEE_PERCENT = 20;
 
 const getDriverUser = async (userId) => {
   const user = await User.findById(userId).lean();
@@ -144,8 +145,10 @@ const compareOtp = (plainOtp, trip) => {
 
 const computeDriverGets = (trip) => {
   const totalFare = Number(trip?.pricing?.finalFare || trip?.pricing?.estimatedFare || 0);
-  const percent = Number(trip?.pricing?.driverSharePercent ?? 0);
-  return Number(((totalFare * percent) / 100).toFixed(2));
+  const fareCents = Math.max(0, Math.round(totalFare * 100));
+  const adminAmount = Math.round((fareCents * ADMIN_FEE_PERCENT) / 100);
+  const driverAmount = fareCents - adminAmount;
+  return Number((driverAmount / 100).toFixed(2));
 };
 
 const calculateFareFromMetrics = ({
@@ -163,8 +166,9 @@ const calculateFareFromMetrics = ({
 const generateOtp = () => String(Math.floor(1000 + Math.random() * 9000));
 const computePlatformGets = (trip) => {
   const totalFare = Number(trip?.pricing?.finalFare || trip?.pricing?.estimatedFare || 0);
-  const driverGets = computeDriverGets(trip);
-  return Number((totalFare - driverGets).toFixed(2));
+  const fareCents = Math.max(0, Math.round(totalFare * 100));
+  const adminAmount = Math.round((fareCents * ADMIN_FEE_PERCENT) / 100);
+  return Number((adminAmount / 100).toFixed(2));
 };
 
 const buildPaymentAmounts = (trip) => {
@@ -741,6 +745,8 @@ const attemptAutomaticTripCharge = async ({ trip, riderProfile, driverProfile })
       riderId: String(trip.riderId),
       driverId: String(trip.driverId),
       autoCharge: "true",
+      driverAmount: String(toStripeAmount(driverGets)),
+      adminAmount: String(toStripeAmount(platformGets)),
     },
   };
 

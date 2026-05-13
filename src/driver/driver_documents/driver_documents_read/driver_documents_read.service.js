@@ -9,6 +9,7 @@ import {
   normalizeReviewStatus,
   syncDriverDocumentSummary,
 } from "../driver_documents.service.js";
+import { assertStripeConfigured } from "../../../core_feature/utils/stripe/stripe.js";
 
 const validateDriver = async (userId) => {
   const user = await User.findById(userId)
@@ -51,6 +52,18 @@ const mapDocument = (doc) => {
 
 const mapClientStatus = (status) =>
   status === "approved" ? "completed" : status === "in_review" ? "in_review" : "need_attention";
+
+const mapDefaultPayoutMethod = (externalAccount) => {
+  if (!externalAccount) {
+    return null;
+  }
+
+  return {
+    type: externalAccount.object || externalAccount.type || null,
+    last4: externalAccount.last4 || null,
+    bankName: externalAccount.bank_name || externalAccount.brand || null,
+  };
+};
 
 export const driverOnboardingReadService = {
 async getSummary(userId) {
@@ -135,15 +148,77 @@ async getSummary(userId) {
     const driverProfile = await DriverProfile.findOne(
       { userId },
       { stripeAccountId: 1, stripeConnected: 1 }
-    ).lean();
+    );
 
     if (!driverProfile) {
       throw { status: 404, message: "Driver profile not found" };
     }
 
+    if (!driverProfile.stripeAccountId) {
+      return {
+        stripeAccountId: null,
+        stripeConnected: false,
+        payoutsEnabled: false,
+        chargesEnabled: false,
+        detailsSubmitted: false,
+        defaultPayoutMethod: null,
+      };
+    }
+
+    const stripeClient = assertStripeConfigured();
+    let account = null;
+
+    try {
+      account = await stripeClient.accounts.retrieve(driverProfile.stripeAccountId);
+    } catch (error) {
+      if (error?.statusCode !== 404 && error?.raw?.code !== "resource_missing") {
+        throw error;
+      }
+
+      driverProfile.stripeAccountId = null;
+      driverProfile.stripeConnected = false;
+      await driverProfile.save();
+
+      return {
+        stripeAccountId: null,
+        stripeConnected: false,
+        payoutsEnabled: false,
+        chargesEnabled: false,
+        detailsSubmitted: false,
+        defaultPayoutMethod: null,
+      };
+    }
+
+    const externalAccounts = await stripeClient.accounts.listExternalAccounts(
+      driverProfile.stripeAccountId,
+      { limit: 1 }
+    );
+    const defaultPayoutMethod = mapDefaultPayoutMethod(externalAccounts.data?.[0]);
+    const stripeConnected = Boolean(account.details_submitted);
+
+    if (driverProfile.stripeConnected !== stripeConnected) {
+      driverProfile.stripeConnected = stripeConnected;
+      await driverProfile.save();
+    }
+
     return {
       stripeAccountId: driverProfile.stripeAccountId || null,
-      stripeConnected: driverProfile.stripeConnected || false,
+      stripeConnected,
+      payoutsEnabled: Boolean(account.payouts_enabled),
+      chargesEnabled: Boolean(account.charges_enabled),
+      detailsSubmitted: Boolean(account.details_submitted),
+      defaultPayoutMethod,
+    };
+  },
+
+  async getStripeApproval(userId) {
+    const stripeInfo = await this.getStripeId(userId);
+    const documentApprovalStatus = stripeInfo.stripeConnected ? "approved" : "need_attention";
+
+    return {
+      stripeAccountId: stripeInfo.stripeAccountId,
+      stripeConnected: stripeInfo.stripeConnected,
+      documentApprovalStatus,
     };
   },
 

@@ -158,6 +158,23 @@ export const driverOnboardingController = {
     }
   },
 
+  async createStripeOnboardingLink(req, res) {
+    try {
+      const result = await driverOnboardingService.createStripeOnboardingLink(
+        req.auth.userId,
+        req.body
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Stripe onboarding link created",
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
   async review(req, res) {
     try {
       const result = await driverOnboardingService.review(req.user.id);

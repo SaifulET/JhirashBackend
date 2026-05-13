@@ -24,6 +24,7 @@ routdriverOnboardingRoute.post("/vehicle-registration",SingleuploadMiddleware,  
 routdriverOnboardingRoute.post("/vehicle-insurance",SingleuploadMiddleware, driverOnboardingController.uploadVehicleInsurance);
 
 // stripe
+routdriverOnboardingRoute.post("/stripe/onboarding-link", driverOnboardingController.createStripeOnboardingLink);
 routdriverOnboardingRoute.post("/connect-stripe", driverOnboardingController.connectStripe);
 
 // final review

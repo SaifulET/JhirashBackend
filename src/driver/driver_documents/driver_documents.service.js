@@ -4,6 +4,7 @@ import { User } from "../../models/User/User.model.js";
 import { DriverProfile } from "../../models/Driver_profile/Driver_profile.model.js";
 import { Vehicle } from "../../models/Vehicle/Vehicle.model.js";
 import { DriverDocument } from "../../models/Driver_documents/Driver_documents.model.js";
+import { assertStripeConfigured } from "../../core_feature/utils/stripe/stripe.js";
 
 export const REQUIRED_DRIVER_DOCUMENT_TYPES = [
   "profile_photo",
@@ -157,7 +158,7 @@ const normalizeVehiclePayload = (payload = {}) => {
 
 const getDriverUser = async (userId) => {
   const user = await User.findById(userId)
-    .select("_id role isDeleted")
+    .select("_id role isDeleted email name")
     .lean();
 
   if (!user || user.isDeleted) {
@@ -169,6 +170,41 @@ const getDriverUser = async (userId) => {
   }
 
   return user;
+};
+
+const getApiUrl = () => {
+  const fallbackUrl = `http://localhost:${process.env.PORT || 5001}`;
+  return String(process.env.API_URL || fallbackUrl).trim().replace(/\/+$/, "");
+};
+
+const getStripeReturnUrl = (payload = {}) => {
+  const returnUrl = String(payload.returnUrl || "").trim();
+
+  if (!returnUrl) {
+    throw {
+      status: 400,
+      message: "returnUrl is required",
+    };
+  }
+
+  return returnUrl;
+};
+
+const buildStripeConnectRedirectUrl = (path, returnUrl) => {
+  return `${getApiUrl()}${path}?redirect=${encodeURIComponent(returnUrl)}`;
+};
+
+const isStripeAccountReady = (account) => {
+  return Boolean(account?.details_submitted && account?.charges_enabled && account?.payouts_enabled);
+};
+
+const isMissingOrInaccessibleStripeAccountError = (error) => {
+  return (
+    error?.statusCode === 404 ||
+    error?.raw?.code === "resource_missing" ||
+    error?.raw?.code === "account_invalid" ||
+    String(error?.message || "").includes("does not have access to account")
+  );
 };
 
 const getOrCreateDriverProfile = async (userId) => {
@@ -576,6 +612,88 @@ async  getStatus(userId) {
   return {
     message: "Vehicle insurance uploaded successfully",
     document,
+  };
+},
+
+  async createStripeOnboardingLink(userId, payload = {}) {
+  const driver = await getDriverUser(userId);
+  const returnUrl = getStripeReturnUrl(payload);
+  const stripeClient = assertStripeConfigured();
+  const driverProfile = await getOrCreateDriverProfile(userId);
+
+  let stripeAccountId = driverProfile.stripeAccountId;
+  let account = null;
+
+  if (stripeAccountId && !String(stripeAccountId).startsWith("acct_")) {
+    stripeAccountId = null;
+    driverProfile.stripeAccountId = null;
+    driverProfile.stripeConnected = false;
+    await driverProfile.save();
+  }
+
+  if (stripeAccountId) {
+    try {
+      account = await stripeClient.accounts.retrieve(stripeAccountId);
+    } catch (error) {
+      if (!isMissingOrInaccessibleStripeAccountError(error)) {
+        throw error;
+      }
+
+      stripeAccountId = null;
+      driverProfile.stripeAccountId = null;
+      driverProfile.stripeConnected = false;
+      await driverProfile.save();
+    }
+  }
+
+  if (!stripeAccountId) {
+    account = await stripeClient.accounts.create({
+      type: "express",
+      country: process.env.STRIPE_CONNECT_COUNTRY || "US",
+      email: driver.email || undefined,
+      capabilities: {
+        transfers: { requested: true },
+        card_payments: { requested: true },
+      },
+      metadata: {
+        driverUserId: String(userId),
+      },
+    });
+
+    stripeAccountId = account.id;
+    driverProfile.stripeAccountId = stripeAccountId;
+    driverProfile.stripeConnected = false;
+    await driverProfile.save();
+  }
+
+  if (isStripeAccountReady(account)) {
+    const loginLink = await stripeClient.accounts.createLoginLink(stripeAccountId);
+
+    if (!driverProfile.stripeConnected) {
+      driverProfile.stripeConnected = true;
+      await driverProfile.save();
+    }
+
+    return {
+      url: loginLink.url,
+      mode: "dashboard",
+      returnUrl,
+      stripeAccountId,
+    };
+  }
+
+  const accountLink = await stripeClient.accountLinks.create({
+    account: stripeAccountId,
+    refresh_url: buildStripeConnectRedirectUrl("/stripe/connect/refresh", returnUrl),
+    return_url: buildStripeConnectRedirectUrl("/stripe/connect/return", returnUrl),
+    type: "account_onboarding",
+  });
+
+  return {
+    url: accountLink.url,
+    mode: "onboarding",
+    returnUrl,
+    stripeAccountId,
   };
 },
 

@@ -14,6 +14,7 @@ driverOnboardingReadRoutes.get("/license-photos", driverOnboardingReadController
 driverOnboardingReadRoutes.get("/vehicle-registration", driverOnboardingReadController.getVehicleRegistration);
 driverOnboardingReadRoutes.get("/vehicle-insurance", driverOnboardingReadController.getInsurance);
 driverOnboardingReadRoutes.get("/stripe", driverOnboardingReadController.getStripeId);
+driverOnboardingReadRoutes.get("/stripe/approval", driverOnboardingReadController.getStripeApproval);
 driverOnboardingReadRoutes.get("/vehicle-info", driverOnboardingReadController.getVehicleInfo);
 
 export default driverOnboardingReadRoutes;
