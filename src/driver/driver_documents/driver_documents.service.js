@@ -156,9 +156,64 @@ const normalizeVehiclePayload = (payload = {}) => {
   };
 };
 
+const normalizeOptionalString = (value) => {
+  const normalizedValue = String(value || "").trim();
+  return normalizedValue || undefined;
+};
+
+const omitUndefinedValues = (payload = {}) => {
+  return Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined));
+};
+
+const splitFullName = (fullName) => {
+  const normalizedName = String(fullName || "").trim();
+
+  if (!normalizedName) {
+    return {
+      firstName: undefined,
+      lastName: undefined,
+    };
+  }
+
+  const nameParts = normalizedName.split(/\s+/).filter(Boolean);
+
+  if (nameParts.length === 1) {
+    return {
+      firstName: nameParts[0],
+      lastName: undefined,
+    };
+  }
+
+  return {
+    firstName: nameParts[0],
+    lastName: nameParts.slice(1).join(" "),
+  };
+};
+
+const buildStripeIndividualPayload = (driver = {}) => {
+  const { firstName, lastName } = splitFullName(driver.name);
+  const address = driver.address || {};
+  const stripeAddress = omitUndefinedValues({
+    line1: normalizeOptionalString(address.line1),
+    line2: normalizeOptionalString(address.line2),
+    city: normalizeOptionalString(address.city),
+    state: normalizeOptionalString(address.state),
+    postal_code: normalizeOptionalString(address.postalCode),
+    country: normalizeOptionalString(address.country),
+  });
+
+  return omitUndefinedValues({
+    first_name: firstName,
+    last_name: lastName,
+    email: normalizeOptionalString(driver.email),
+    phone: normalizeOptionalString(driver.phone),
+    address: Object.keys(stripeAddress).length > 0 ? stripeAddress : undefined,
+  });
+};
+
 const getDriverUser = async (userId) => {
   const user = await User.findById(userId)
-    .select("_id role isDeleted email name")
+    .select("_id role isDeleted email name phone address")
     .lean();
 
   if (!user || user.isDeleted) {
@@ -647,15 +702,23 @@ async  getStatus(userId) {
   }
 
   if (!stripeAccountId) {
+    const stripeIndividual = buildStripeIndividualPayload(driver);
+
     account = await stripeClient.accounts.create({
       type: "express",
       country: process.env.STRIPE_CONNECT_COUNTRY || "US",
       business_type: "individual",
-      email: driver.email || undefined,
+      email: normalizeOptionalString(driver.email),
+      business_profile: {
+        mcc: "4121",
+        product_description: "Ride sharing driver services",
+        url: "https://ma3llc.co",
+      },
       capabilities: {
         transfers: { requested: true },
         card_payments: { requested: true },
       },
+      individual: stripeIndividual,
       metadata: {
         driverUserId: String(userId),
       },

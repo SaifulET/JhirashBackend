@@ -10,6 +10,14 @@ const UserSchema = new Schema(
     name: { type: String, trim: true, required: true },
     email: { type: String, lowercase: true, trim: true },
     phone: { type: String, trim: true },
+    address: {
+      line1: { type: String, trim: true, default: "" },
+      line2: { type: String, trim: true, default: "" },
+      city: { type: String, trim: true, default: "" },
+      state: { type: String, trim: true, default: "" },
+      postalCode: { type: String, trim: true, default: "" },
+      country: { type: String, trim: true, uppercase: true, default: "" },
+    },
     emergency:{type:String,trim:true},
     profileImage:{type:String},
     passwordHash: { type: String }, // email/password

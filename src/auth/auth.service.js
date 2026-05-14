@@ -34,6 +34,30 @@ function randomOtp4() {
   return String(Math.floor(1000 + Math.random() * 9000));
 }
 
+function normalizeSignupPhone(phone) {
+  const rawPhone = String(phone || "").trim();
+
+  if (!rawPhone) {
+    return undefined;
+  }
+
+  const digitsOnly = rawPhone.replace(/\D/g, "");
+
+  if (digitsOnly.length === 10) {
+    return `+1${digitsOnly}`;
+  }
+
+  if (digitsOnly.length === 11 && digitsOnly.startsWith("1")) {
+    return `+${digitsOnly}`;
+  }
+
+  throw {
+    status: 400,
+    code: "VALIDATION_ERROR",
+    message: "Phone number must be a valid 10-digit US number",
+  };
+}
+
 async function sendOtpEmail({ email, otp, name, purpose = "email_verification" }) {
   const isPasswordReset = purpose === "password_reset";
   const safeName = String(name || "").trim();
@@ -147,6 +171,7 @@ export const authService = {
     if (!password || password.length < 6) throw { status: 400, code: "VALIDATION_ERROR", message: "Weak password" };
 
     const normalizedEmail = email?.toLowerCase();
+    const normalizedPhone = normalizeSignupPhone(phone);
 
     const exists = await User.findOne({
       $or: [...(normalizedEmail ? [{ email: normalizedEmail }] : [])],
@@ -162,7 +187,7 @@ export const authService = {
       name,
       email: normalizedEmail,
       passwordHash,
-      phone,
+      phone: normalizedPhone,
       status: "active",
       emailVerifiedAt: null,
       isDeleted: false,
@@ -606,4 +631,3 @@ const updatedDoc = await User.findByIdAndUpdate(
   return updatedDoc;
   }
 };
-

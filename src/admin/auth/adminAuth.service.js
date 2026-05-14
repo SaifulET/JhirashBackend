@@ -195,6 +195,7 @@ const sendAdminResetCodeEmail = async ({ email, otp, adminName }) => {
 
 export const adminAuthService = {
   async signin({ email, password }) {
+    
     if (!password) {
       throw { status: 400, message: "password is required" };
     }
