@@ -1,6 +1,9 @@
 import Stripe from "stripe";
 
-const MAASAD_RIDER_EMAIL = "maasad11914@gmail.com";
+const STRIPE_TEST_OVERRIDE_EMAILS = [
+  "maasad11914@gmail.com",
+  "blackboys11914@gmail.com",
+];
 const stripeClientsBySecretKey = new Map();
 
 const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
@@ -10,17 +13,16 @@ const getStripeOverridesByEmail = () => {
   const publishableKey = process.env.MAASAD_STRIPE_PUBLISHABLE_KEY_OVERRIDE || null;
 
   return new Map(
-    [
-      secretKey || publishableKey
-        ? [
-            MAASAD_RIDER_EMAIL,
-            {
-              secretKey: secretKey || undefined,
-              publishableKey: publishableKey || undefined,
-            },
-          ]
-        : null,
-    ].filter(Boolean)
+    (secretKey || publishableKey
+      ? STRIPE_TEST_OVERRIDE_EMAILS.map((email) => [
+          email,
+          {
+            secretKey: secretKey || undefined,
+            publishableKey: publishableKey || undefined,
+          },
+        ])
+      : []
+    ).filter(Boolean)
   );
 };
 

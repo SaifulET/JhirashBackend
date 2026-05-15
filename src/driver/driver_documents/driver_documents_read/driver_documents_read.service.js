@@ -9,11 +9,11 @@ import {
   normalizeReviewStatus,
   syncDriverDocumentSummary,
 } from "../driver_documents.service.js";
-import { assertStripeConfigured } from "../../../core_feature/utils/stripe/stripe.js";
+import { assertStripeConfiguredForEmail } from "../../../core_feature/utils/stripe/stripe.js";
 
 const validateDriver = async (userId) => {
   const user = await User.findById(userId)
-    .select("role isDeleted profileImage")
+    .select("role isDeleted profileImage email")
     .lean();
 
   if (!user || user.isDeleted) {
@@ -143,7 +143,7 @@ async getSummary(userId) {
   },
 
   async getStripeId(userId) {
-    await validateDriver(userId);
+    const driver = await validateDriver(userId);
 
     const driverProfile = await DriverProfile.findOne(
       { userId },
@@ -165,7 +165,7 @@ async getSummary(userId) {
       };
     }
 
-    const stripeClient = assertStripeConfigured();
+    const stripeClient = assertStripeConfiguredForEmail(driver.email);
     let account = null;
 
     try {

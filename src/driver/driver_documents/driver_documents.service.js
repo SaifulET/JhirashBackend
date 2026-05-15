@@ -4,7 +4,7 @@ import { User } from "../../models/User/User.model.js";
 import { DriverProfile } from "../../models/Driver_profile/Driver_profile.model.js";
 import { Vehicle } from "../../models/Vehicle/Vehicle.model.js";
 import { DriverDocument } from "../../models/Driver_documents/Driver_documents.model.js";
-import { assertStripeConfigured } from "../../core_feature/utils/stripe/stripe.js";
+import { assertStripeConfiguredForEmail } from "../../core_feature/utils/stripe/stripe.js";
 
 export const REQUIRED_DRIVER_DOCUMENT_TYPES = [
   "profile_photo",
@@ -673,7 +673,7 @@ async  getStatus(userId) {
   async createStripeOnboardingLink(userId, payload = {}) {
   const driver = await getDriverUser(userId);
   const returnUrl = getStripeReturnUrl(payload);
-  const stripeClient = assertStripeConfigured();
+  const stripeClient = assertStripeConfiguredForEmail(driver.email);
   const driverProfile = await getOrCreateDriverProfile(userId);
 
   let stripeAccountId = driverProfile.stripeAccountId;
@@ -710,7 +710,7 @@ async  getStatus(userId) {
       business_type: "individual",
       email: normalizeOptionalString(driver.email),
       business_profile: {
-        mcc: "4121",
+        mcc: "5734",
         product_description: "Ride sharing driver services",
         url: "https://ma3llc.co",
       },
