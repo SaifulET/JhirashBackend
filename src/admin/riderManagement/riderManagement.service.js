@@ -5,8 +5,11 @@ import { Trip } from "../../models/Trip/Trip.model.js";
 import { Payment } from "../../models/Payment/Payment.model.js";
 import { Rating } from "../../models/Rating/Rating.model.js";
 import { Report } from "../../models/Reports/Reports.model.js";
+import { AuthToken } from "../../models/Auth_token/Auth_token.model.js";
+import { Notification } from "../../models/Notifications/Notifications.model.js";
 
 const DELETION_TIMELINE_DAYS = 30;
+const ACTIVE_TRIP_STATUSES = ["accepted", "driver_arrived", "otp_verified", "started"];
 
 const ensureAdminUser = async (userId) => {
   const user = await User.findById(userId).select("_id role isDeleted").lean();
@@ -594,6 +597,45 @@ export const riderManagementService = {
     return {
       message: "Rider restored successfully",
       deletion: computeDeletionInfo(user),
+    };
+  },
+
+  async hardDeleteRider(adminUserId, riderId) {
+    await ensureAdminUser(adminUserId);
+    await ensureRiderUser(riderId);
+
+    const activeTripCount = await Trip.countDocuments({
+      riderId,
+      status: { $in: ACTIVE_TRIP_STATUSES },
+    });
+
+    if (activeTripCount) {
+      throw {
+        status: 400,
+        message: "Rider has active trips. Complete or cancel active trips before permanent deletion.",
+      };
+    }
+
+    const [riderProfileResult, authTokenResult, notificationResult, userResult] =
+      await Promise.all([
+        RiderProfile.deleteMany({ userId: riderId }),
+        AuthToken.deleteMany({ userId: riderId }),
+        Notification.deleteMany({ userId: riderId }),
+        User.deleteOne({ _id: riderId, role: "rider" }),
+      ]);
+
+    if (!userResult.deletedCount) {
+      throw { status: 404, message: "Rider not found" };
+    }
+
+    return {
+      message: "Rider permanently deleted successfully",
+      deleted: {
+        users: userResult.deletedCount,
+        riderProfiles: riderProfileResult.deletedCount,
+        authTokens: authTokenResult.deletedCount,
+        notifications: notificationResult.deletedCount,
+      },
     };
   },
 };

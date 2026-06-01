@@ -185,4 +185,20 @@ export const driverManagementController = {
       return handleError(res, error);
     }
   },
+
+  async hardDeleteDriver(req, res) {
+    try {
+      const result = await driverManagementService.hardDeleteDriver(
+        req.auth.userId,
+        req.params.driverId
+      );
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
 };

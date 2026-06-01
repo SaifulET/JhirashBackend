@@ -5,6 +5,9 @@ import { Vehicle } from "../../models/Vehicle/Vehicle.model.js";
 import { Trip } from "../../models/Trip/Trip.model.js";
 import { Rating } from "../../models/Rating/Rating.model.js";
 import { Report } from "../../models/Reports/Reports.model.js";
+import { AuthToken } from "../../models/Auth_token/Auth_token.model.js";
+import { DriverOnlineSession } from "../../models/Driver_online_session/DriverOnlineSession.model.js";
+import { Notification } from "../../models/Notifications/Notifications.model.js";
 import {
   getVehicleReviewStatus,
   normalizeReviewStatus,
@@ -12,6 +15,7 @@ import {
 } from "../../driver/driver_documents/driver_documents.service.js";
 
 const DELETION_TIMELINE_DAYS = 30;
+const ACTIVE_TRIP_STATUSES = ["accepted", "driver_arrived", "otp_verified", "started"];
 
 const ensureAdminUser = async (userId) => {
   const user = await User.findById(userId).select("_id role isDeleted").lean();
@@ -732,6 +736,58 @@ export const driverManagementService = {
     return {
       message: "Driver restored successfully",
       deletion: computeDeletionInfo(user),
+    };
+  },
+
+  async hardDeleteDriver(adminUserId, driverId) {
+    await ensureAdminUser(adminUserId);
+    await ensureDriverUser(driverId);
+
+    const activeTripCount = await Trip.countDocuments({
+      driverId,
+      status: { $in: ACTIVE_TRIP_STATUSES },
+    });
+
+    if (activeTripCount) {
+      throw {
+        status: 400,
+        message: "Driver has active trips. Complete or cancel active trips before permanent deletion.",
+      };
+    }
+
+    const [
+      driverProfileResult,
+      driverDocumentResult,
+      vehicleResult,
+      authTokenResult,
+      onlineSessionResult,
+      notificationResult,
+      userResult,
+    ] = await Promise.all([
+      DriverProfile.deleteMany({ userId: driverId }),
+      DriverDocument.deleteMany({ driverId }),
+      Vehicle.deleteMany({ driverId }),
+      AuthToken.deleteMany({ userId: driverId }),
+      DriverOnlineSession.deleteMany({ driverId }),
+      Notification.deleteMany({ userId: driverId }),
+      User.deleteOne({ _id: driverId, role: "driver" }),
+    ]);
+
+    if (!userResult.deletedCount) {
+      throw { status: 404, message: "Driver not found" };
+    }
+
+    return {
+      message: "Driver permanently deleted successfully",
+      deleted: {
+        users: userResult.deletedCount,
+        driverProfiles: driverProfileResult.deletedCount,
+        driverDocuments: driverDocumentResult.deletedCount,
+        vehicles: vehicleResult.deletedCount,
+        authTokens: authTokenResult.deletedCount,
+        onlineSessions: onlineSessionResult.deletedCount,
+        notifications: notificationResult.deletedCount,
+      },
     };
   },
 };

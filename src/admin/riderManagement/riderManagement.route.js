@@ -20,6 +20,10 @@ adminRiderManagementRouter.patch(
   "/:riderId/account-status",
   riderManagementController.updateRiderAccountStatus
 );
+adminRiderManagementRouter.delete(
+  "/:riderId/hard-delete",
+  riderManagementController.hardDeleteRider
+);
 adminRiderManagementRouter.delete("/:riderId", riderManagementController.deleteRider);
 adminRiderManagementRouter.patch("/:riderId/restore", riderManagementController.restoreRider);
 

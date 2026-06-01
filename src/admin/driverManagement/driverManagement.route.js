@@ -30,6 +30,10 @@ adminDriverManagementRouter.patch(
   "/:driverId/account-status",
   driverManagementController.updateDriverAccountStatus
 );
+adminDriverManagementRouter.delete(
+  "/:driverId/hard-delete",
+  driverManagementController.hardDeleteDriver
+);
 adminDriverManagementRouter.delete("/:driverId", driverManagementController.deleteDriver);
 adminDriverManagementRouter.patch("/:driverId/restore", driverManagementController.restoreDriver);
 

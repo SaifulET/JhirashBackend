@@ -167,4 +167,20 @@ export const riderManagementController = {
       return handleError(res, error);
     }
   },
+
+  async hardDeleteRider(req, res) {
+    try {
+      const result = await riderManagementService.hardDeleteRider(
+        req.auth.userId,
+        req.params.riderId
+      );
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result,
+      });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
 };
