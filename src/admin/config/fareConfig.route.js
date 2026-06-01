@@ -6,6 +6,8 @@ const adminConfigRouter = express.Router();
 
 adminConfigRouter.use(requireAuth);
 
+adminConfigRouter.get("/payment-share", fareConfigController.getPaymentSharePercentages);
+
 adminConfigRouter.get("/", fareConfigController.getConfig);
 
 adminConfigRouter.post("/", fareConfigController.createConfig);

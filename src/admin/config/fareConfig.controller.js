@@ -25,6 +25,22 @@ export const fareConfigController = {
     }
   },
 
+  async getPaymentSharePercentages(req, res) {
+    try {
+
+      const result = await fareConfigService.getPaymentSharePercentages();
+
+      return res.status(200).json({
+        success: true,
+        message: "Payment share percentages fetched successfully",
+        data: result,
+      });
+
+    } catch (error) {
+      return handleError(res, error);
+    }
+  },
+
   async createConfig(req, res) {
     try {
 

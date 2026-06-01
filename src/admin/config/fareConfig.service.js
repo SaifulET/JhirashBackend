@@ -27,6 +27,23 @@ export const fareConfigService = {
     return config;
   },
 
+  async getPaymentSharePercentages() {
+    const config = await FareConfig.findOne({ active: true })
+      .select("driverSharePercent")
+      .lean();
+
+    if (!config) {
+      throw { status: 404, message: "Fare configuration not found" };
+    }
+
+    const driverGets = Math.min(100, Math.max(0, toNumber(config.driverSharePercent)));
+
+    return {
+      driverGets,
+      received: toNumber((100 - driverGets).toFixed(2)),
+    };
+  },
+
   async createConfig(adminId, payload) {
 
     const existing = await FareConfig.findOne({ active: true });
